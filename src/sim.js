@@ -73,6 +73,7 @@ export class Game {
     this.dishDripT = 0;
     this.fryer = { smoking: false, t: 0 };
     this.shotgun = { stowed: true, shells: TUNING.shotgunShells };
+    this.busClock = null;
     this.nextId = 1;
     this.tracks = {
       cash: 0, hospitality: 50, loyalty: 50, heat: 0, gentrification: 20, chaos: 0,
@@ -119,6 +120,107 @@ export class Game {
     else if (cmd.c === 'drop') { this.dropCarry(p, true); }
     else if (cmd.c === 'fire') { this.fireShotgun(p); }
     else if (cmd.c === 'ability') { this.useAbility(p); }
+    else if (cmd.c === 'throw') { this.throwItem(p, cmd.p); }
+  }
+
+  // ── the throw verb (bible §8: charge and release) ────────────────────────
+  throwItem(p, power01) {
+    if (!p.carry || p.carry.kind === 'shotgun' || p.carry.kind === 'mopheld' || p.busy) { return; }
+    const kind = p.carry.kind;
+    p.carry = null;
+    const pw = Math.max(0, Math.min(1, power01 || 0));
+    const spd = TUNING.throwMinSpeed + ((TUNING.throwMaxSpeed - TUNING.throwMinSpeed) * pw);
+    this.items.push({
+      id: this.nextId++, kind,
+      x: p.x + (p.fx * 0.5), z: p.z + (p.fz * 0.5), y: 1.15,
+      fly: true, vx: p.fx * spd, vz: p.fz * spd,
+      vy: TUNING.throwUpMin + ((TUNING.throwUpMax - TUNING.throwUpMin) * pw),
+      power: pw, thrower: p.pid, bonked: false,
+    });
+    this.ev('throw', { pid: p.pid, item: kind, power: pw });
+  }
+
+  flightTick(dt) {
+    for (let i = this.items.length - 1; i >= 0; i--) {
+      const it = this.items[i];
+      if (!it.fly) { continue; }
+      it.vy -= TUNING.throwGravity * dt;
+      it.y += it.vy * dt;
+      const nx = it.x + (it.vx * dt);
+      const nz = it.z + (it.vz * dt);
+      if (this.blockedAt(nx, nz) && it.y < 1.9) { it.vx = 0; it.vz = 0; } else { it.x = nx; it.z = nz; }
+      // a teammate with free hands catches it clean
+      let caught = false;
+      for (const q of this.players) {
+        if (q.pid === it.thrower || q.carry || q.busy || q.stun > 0) { continue; }
+        if (it.y < 1.6 && Math.hypot(q.x - it.x, q.z - it.z) < TUNING.catchRadius) {
+          this.items.splice(i, 1);
+          q.carry = { kind: it.kind };
+          this.ev('catch', { pid: q.pid, item: it.kind });
+          caught = true;
+          break;
+        }
+      }
+      if (caught) { continue; }
+      // one bonk per flight — comedy, consequences, cameras
+      if (!it.bonked && it.y > 0.2 && it.y < 1.7) {
+        for (const g of this.guests) {
+          if (g.state === 'gone' || g.state === 'leaving') { continue; }
+          if (Math.hypot(g.x - it.x, g.z - it.z) < TUNING.bonkRadius) {
+            it.bonked = true;
+            it.vx *= 0.2; it.vz *= 0.2; it.vy = Math.min(it.vy, 1);
+            g.slipT = Math.max(g.slipT, 1.0);
+            const party = this.parties.find((q2) => q2.id === g.partyId);
+            if (party) { party.mood -= 2; }
+            this.track('hospitality', -2, 'evt.bonk', 'a guest took one off the head');
+            this.ev('bonk', { x: it.x, z: it.z });
+            this.witnessMoment('bonk', it.x, it.z, 0.4);
+            break;
+          }
+        }
+      }
+      if (it.y <= 0) {
+        it.y = 0;
+        it.fly = false;
+        this.landThrow(it);
+      }
+    }
+  }
+
+  landThrow(it) {
+    // rough delivery: a matching open order at the table it landed by
+    const tbl = this.tables.find((t) =>
+      t.partyId != null && Math.hypot(t.x + 0.5 - it.x, t.z + 0.5 - it.z) < 1.4);
+    if (tbl) {
+      const ord = this.orders.find((o) => o.tableId === tbl.id && o.state === 'open');
+      if (ord) {
+        const req = REQUESTS[ord.reqKey];
+        const match = it.kind === req.needItem || (req.substitute && it.kind === req.substitute.item);
+        const party = this.parties.find((q) => q.id === ord.partyId);
+        if (match && party) {
+          this.items.splice(this.items.indexOf(it), 1);
+          ord.state = 'done';
+          ord.path = 'thrown';
+          party.state = 'eating';
+          party.eatT = TUNING.eatSeconds;
+          party.satisfied = Math.min(0.45, (ord.tLeft / ord.total) * 0.6);
+          party.pay = req.pay;
+          party.mood -= 1;
+          this.track('chaos', 1, 'evt.throw.delivery', 'service, airborne');
+          this.ev('served', { tableId: tbl.id, path: 'thrown' });
+          return;
+        }
+      }
+    }
+    // fragile things do not love landing hard
+    if (ITEMS[it.kind] && ITEMS[it.kind].fragile && it.power > 0.45) {
+      this.items.splice(this.items.indexOf(it), 1);
+      this.addSpill(it.x | 0, it.z | 0, 'shards');
+      this.ev('glassbreak', { x: it.x, z: it.z });
+      this.track('chaos', 1, 'evt.throw.break', 'glass, everywhere');
+      return;
+    }
+    this.ev('land', { item: it.kind });
   }
 
   // ── context action: the single readable verb (bible §8 tap interact) ─────
@@ -246,7 +348,9 @@ export class Game {
 
   // ── service ──────────────────────────────────────────────────────────────
   takeOrder(p, tbl, party) {
-    const reqKey = this.pick(ARCHETYPES[party.arche].pool);
+    const reqKey = party.bus && this.rng() < 0.5
+      ? 'buscheck'
+      : this.pick(ARCHETYPES[party.arche].pool);
     const req = REQUESTS[reqKey];
     party.state = req.social ? 'social' : 'ordered';
     const o = {
@@ -304,7 +408,8 @@ export class Game {
 
   collect(p, tbl, party) {
     const arche = ARCHETYPES[party.arche];
-    const tip = party.pay * (party.satisfied > 0.5 ? TUNING.tipHappy : TUNING.tipOk) * arche.tipMul;
+    let tip = party.pay * (party.satisfied > 0.5 ? TUNING.tipHappy : TUNING.tipOk) * arche.tipMul;
+    if (party.bus && this.busClock != null) { tip += party.pay * TUNING.busTipBonus; }
     this.track('cash', Math.round(party.pay + tip), 'evt.pay.t' + tbl.id, arche.label + ' paid');
     this.track('hospitality', party.satisfied > 0.5 ? 2 : 1, 'evt.pay.t' + tbl.id, 'service landed');
     if (arche.local) { this.track('loyalty', 2, 'evt.local.happy', 'a local went home happy'); }
@@ -567,7 +672,7 @@ export class Game {
     if (pig.eatT > 0) { pig.eatT -= dt; return; }
     let best = null; let bd = 99;
     for (const it of this.items) {
-      if (it.held || it.kind === 'shotgun') { continue; }
+      if (it.held || it.fly || it.kind === 'shotgun') { continue; }
       const d = Math.hypot(it.x - pig.x, it.z - pig.z);
       if (d < bd) { bd = d; best = it; }
     }
@@ -682,6 +787,15 @@ export class Game {
       if (b) { b.rowdy = true; b.mood -= 1; this.ev('darewave', { tableId: b.tableId }); }
     } else if (key === 'inspector') {
       this.spawnParty('inspector');
+    } else if (key === 'tourbus') {
+      let spawned = 0;
+      for (let i = 0; i < 3; i++) { if (this.spawnParty('tourist')) { spawned++; } }
+      if (spawned > 0) {
+        this.busClock = TUNING.busClockSeconds;
+        const fresh = this.parties.slice(-spawned);
+        for (const q of fresh) { q.bus = true; }
+        this.ev('tourbus', { parties: spawned });
+      }
     }
   }
 
@@ -808,17 +922,39 @@ export class Game {
         // player slips
         const s = this.spills.find((sp) => sp.kind === 'spill' && sp.x === (p.x | 0) && sp.z === (p.z | 0));
         if (s && this.rng() < TUNING.spillSlipChance * dt * (p.sprint ? 2.2 : 1)) {
-          p.stun = 0.8;
-          this.ev('slip', { x: p.x, z: p.z, who: 'player', pid: p.pid });
+          // full-speed hustle = a proper knockdown; a walk is just a stumble
+          p.stun = p.sprint ? TUNING.knockdownSeconds : 0.8;
+          this.ev('slip', { x: p.x, z: p.z, who: 'player', pid: p.pid, hard: p.sprint });
           if (p.carry && p.carry.kind !== 'shotgun' && p.carry.kind !== 'mopheld') { this.dropCarry(p, false); }
         }
       }
     }
 
+    this.flightTick(dt);
     for (const g of this.guests) { if (g.state !== 'gone') { this.guestTick(g, dt); } }
     for (const party of this.parties) { if (party.state !== 'gone') { this.partyTick(party, dt); } }
     this.ordersTick(dt);
     for (const pig of this.pigs) { this.pigTick(pig, dt); }
+    // the bus waits for no burger
+    if (this.busClock != null) {
+      this.busClock -= dt;
+      if (this.busClock <= 0) {
+        this.busClock = null;
+        for (const q of this.parties) {
+          if (!q.bus || q.state === 'leaving' || q.state === 'gone') { continue; }
+          if (q.state === 'waitpay' || q.state === 'eating') {
+            this.track('cash', Math.round(q.pay || 0), 'evt.bus.cash', 'cash left under a ketchup bottle');
+            this.stats.partiesResolved++;
+            this.partyLeave(q, 'paid');
+          } else {
+            this.track('hospitality', TUNING.busUnservedHosp, 'evt.bus.left', 'the bus left them unfed');
+            this.stats.walkouts++;
+            this.partyLeave(q, 'bus');
+          }
+        }
+        this.ev('busgone');
+      }
+    }
 
     // dishwasher drips
     if (this.dishFault) {

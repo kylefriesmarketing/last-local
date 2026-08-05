@@ -18,6 +18,8 @@ const TELEGRAPH_LINES = {
   table_drum: 'Table drumming. The dares are coming.',
   sedan_parks: 'A gray sedan parks with terrible precision.',
   clipboard: 'Somebody just uncapped a pen.',
+  air_brakes: 'Air brakes hiss out on the highway…',
+  headlights_many: 'That is a LOT of headlights.',
 };
 
 const EVENT_TOASTS = {
@@ -43,6 +45,10 @@ const EVENT_TOASTS = {
   clipboard:   { text: '🖊️ The quiet one wrote something down.', cls: 'warn' },
   song:        { text: '🎸 Jo plays the one everybody knows.', cls: 'good' },
   waitpay:     { text: '💵 A table wants to settle up.', cls: 'good' },
+  bonk:        { text: '🎯 …that hit a customer.', cls: 'warn' },
+  catch:       { text: '🧤 CAUGHT. The crew has hands.', cls: 'good' },
+  tourbus:     { text: '🚌 TOUR BUS. Three parties. One clock.', cls: 'warn' },
+  busgone:     { text: '🚌 The bus pulls out. Whoever missed it, missed it.', cls: '' },
 };
 
 export class Hud {
@@ -96,7 +102,9 @@ export class Hud {
       return;
     }
     if (e.kind === 'served') {
-      this.toast(e.path === 'deception' ? '🤫 Served… something. They bought it.' : '✅ Table ' + e.tableId + ' served.', 'good');
+      this.toast(e.path === 'deception' ? '🤫 Served… something. They bought it.'
+        : e.path === 'thrown' ? '🥏 Table ' + e.tableId + ' served. Airborne. They noticed.'
+          : '✅ Table ' + e.tableId + ' served.', e.path === 'thrown' ? '' : 'good');
       return;
     }
     if (e.kind === 'wrongitem') {
@@ -108,11 +116,16 @@ export class Hud {
     if (t) { this.toast(t.text, t.cls); }
   }
 
-  sync(game, player, dt) {
+  sync(game, player, dt, chargePower, stallSeconds) {
     const phase = game.phaseId();
     $('phase').textContent = phase.replace('_', ' ').toUpperCase();
     const left = Math.max(0, SHIFT.duration - game.time);
-    $('clock').textContent = Math.floor(left / 60) + ':' + String(Math.floor(left % 60)).padStart(2, '0');
+    let clockText = Math.floor(left / 60) + ':' + String(Math.floor(left % 60)).padStart(2, '0');
+    if (game.busClock != null) {
+      clockText += '  🚌 ' + Math.max(0, game.busClock | 0) + 's';
+    }
+    $('clock').textContent = clockText;
+    $('clock').style.color = game.busClock != null && game.busClock < 20 ? 'var(--rust)' : '';
     $('cash').textContent = '$' + (game.tracks.cash / 100).toFixed(0) + ' / $' + (TUNING.registerGoal / 100).toFixed(0);
 
     for (const key of Object.keys(this.trackEls)) {
@@ -146,10 +159,16 @@ export class Hud {
 
     // carry + ability chips
     let chips = '';
-    if (player.carry) { chips += `<span class="chip">CARRY <b>${player.carry.kind}</b></span>`; }
+    if (player.carry) { chips += `<span class="chip">CARRY <b>${player.carry.kind}</b> <i style="opacity:.6">(Space: throw)</i></span>`; }
     const cd = player.abilityCd > 0 ? ' (' + Math.ceil(player.abilityCd) + 's)' : '';
     chips += `<span class="chip"><b>Q</b> ${player.e.abilityLabel}${cd}</span>`;
     if (!game.shotgun.stowed) { chips += `<span class="chip" style="border-color:var(--rust)">🔫 shells <b>${game.shotgun.shells}</b></span>`; }
+    if (chargePower != null) {
+      chips += `<span class="chip" style="border-color:var(--amber)">🥏 <b>${(chargePower * 100) | 0}%</b></span>`;
+    }
+    if (stallSeconds > 0.6) {
+      chips += `<span class="chip" style="border-color:var(--cold)">⏳ waiting on the party…</span>`;
+    }
     $('carry').innerHTML = chips;
 
     if (this.telegraphT > 0) {

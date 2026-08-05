@@ -244,6 +244,129 @@ T('honest path resolves, payment lands with attribution', () => {
   ok(g.tracks.journal.some((j) => j.key === 'loyalty' && j.amount > 0), 'local loyalty attributed');
 });
 
+console.log('== the throw verb ==');
+T('a thrown fragile beer breaks into shards on a hard landing', () => {
+  const g = new Game({ seed: 5 });
+  const p = g.players[0];
+  p.x = 9.5; p.z = 5.5; p.fx = 1; p.fz = 0; // facing open floor east
+  p.carry = { kind: 'beer' };
+  g.execCommand(0, { c: 'throw', p: 1 });
+  ok(g.items.some((i) => i.fly), 'item is airborne');
+  for (let i = 0; i < 60; i++) { g.tick(); g.view.length = 0; }
+  ok(!g.items.some((i) => i.kind === 'beer'), 'beer gone');
+  ok(g.spills.some((s) => s.kind === 'shards'), 'shards on the floor');
+  ok(g.tracks.journal.some((j) => j.cause === 'evt.throw.break'), 'break attributed');
+});
+T('a soft-tossed burger survives and becomes pig bait', () => {
+  const g = new Game({ seed: 5 });
+  const p = g.players[0];
+  p.x = 9.5; p.z = 5.5; p.fx = 1; p.fz = 0;
+  p.carry = { kind: 'burger' };
+  g.execCommand(0, { c: 'throw', p: 0.2 });
+  for (let i = 0; i < 60; i++) { g.tick(); g.view.length = 0; }
+  ok(g.items.some((i) => i.kind === 'burger' && !i.fly), 'burger landed intact');
+});
+T('a teammate with free hands catches a thrown item', () => {
+  const g = new Game({ seed: 5, players: [{ employeeKey: 'mara' }, { employeeKey: 'jo' }] });
+  const p0 = g.players[0]; const p1 = g.players[1];
+  p0.x = 8.5; p0.z = 5.5; p0.fx = 1; p0.fz = 0;
+  p1.x = 12.5; p1.z = 5.5; p1.carry = null;
+  p0.carry = { kind: 'burger' };
+  g.execCommand(0, { c: 'throw', p: 0.55 });
+  let caught = false;
+  for (let i = 0; i < 60 && !caught; i++) {
+    g.tick();
+    for (const e of g.view) { if (e.kind === 'catch') { caught = true; } }
+    g.view.length = 0;
+  }
+  ok(caught, 'catch event fired');
+  eq(p1.carry && p1.carry.kind, 'burger', 'jo holds the burger');
+});
+T('rough delivery: a thrown match lands at the table and serves it (badly)', () => {
+  const g = new Game({ seed: 3 });
+  ok(g.spawnParty('tourist'), 'party seated');
+  const party = g.parties[0];
+  const tbl = g.tables.find((t) => t.id === party.tableId);
+  party.state = 'ordered';
+  const ord = { id: 999, tableId: tbl.id, partyId: party.id, reqKey: 'beer', state: 'open', tLeft: 60, total: 75 };
+  g.orders.push(ord);
+  const p = g.players[0];
+  // stand two tiles south of the table, face it, lob
+  p.x = tbl.x + 0.5; p.z = tbl.z + 2.5; p.fx = 0; p.fz = -1;
+  p.carry = { kind: 'beer' };
+  g.execCommand(0, { c: 'throw', p: 0.32 });
+  for (let i = 0; i < 60 && ord.state === 'open'; i++) { g.tick(); g.view.length = 0; }
+  eq(ord.state, 'done', 'order resolved by air mail');
+  eq(ord.path, 'thrown', 'path recorded');
+  ok(party.satisfied <= 0.45, 'satisfaction capped for aggressive service');
+});
+T('bonking a guest costs hospitality and gets filmed sometimes', () => {
+  let bonked = false;
+  for (let seed = 1; seed <= 10 && !bonked; seed++) {
+    const g = new Game({ seed });
+    ok(g.spawnParty('influencer'), 'seat');
+    // walk guests in a few ticks so one is on the floor mid-room
+    for (let i = 0; i < 40; i++) { g.tick(); g.view.length = 0; }
+    const target = g.guests.find((x) => x.state !== 'gone');
+    if (!target) { continue; }
+    const p = g.players[0];
+    p.x = target.x - 2; p.z = target.z; p.fx = 1; p.fz = 0;
+    p.carry = { kind: 'burger' };
+    g.execCommand(0, { c: 'throw', p: 0.5 });
+    for (let i = 0; i < 40; i++) {
+      g.tick();
+      for (const e of g.view) { if (e.kind === 'bonk') { bonked = true; } }
+      g.view.length = 0;
+    }
+    if (bonked) {
+      ok(g.tracks.journal.some((j) => j.cause === 'evt.bonk'), 'bonk attributed');
+    }
+  }
+  ok(bonked, 'no bonk landed in 10 seeds');
+});
+T('sprint slip is a real knockdown', () => {
+  const g = new Game({ seed: 7 });
+  const p = g.players[0];
+  g.addSpill(9, 12, 'spill');
+  p.x = 9.5; p.z = 12.5;
+  g.setInput(0, 1, 0, true); // sprinting through the puddle
+  let hard = false;
+  for (let i = 0; i < 400 && !hard; i++) {
+    p.x = 9.5; p.z = 12.5; // keep them in the puddle until physics wins
+    g.tick();
+    for (const e of g.view) { if (e.kind === 'slip' && e.hard) { hard = true; } }
+    g.view.length = 0;
+  }
+  ok(hard, 'hard slip fired');
+  ok(g.players[0].stun > 1.0, 'knockdown stun applied (' + g.players[0].stun.toFixed(2) + ')');
+});
+
+console.log('== the tour bus ==');
+T('tour bus seats three parties, the clock pays or punishes, then leaves', () => {
+  const g = new Game({ seed: 13 });
+  g.time = 400; // compression
+  g.fireEvent('tourbus');
+  const bus = g.parties.filter((q) => q.bus);
+  eq(bus.length, 3, 'three bus parties');
+  ok(g.busClock > 0, 'clock running');
+  // serve none; run the clock out
+  for (let i = 0; i < 20 * 80; i++) { g.tick(); g.view.length = 0; }
+  ok(g.busClock === null, 'clock expired');
+  ok(bus.every((q) => q.state === 'leaving' || q.state === 'gone'), 'bus parties left');
+  const busHits = g.tracks.journal.filter((j) => j.cause === 'evt.bus.left');
+  ok(busHits.length >= 1, 'unserved bus penalty attributed (' + busHits.length + ')');
+});
+T('throw commands stay deterministic across the wire', () => {
+  const scripts = {
+    0: [{ t: 60, c: { c: 'in', mx: 1, mz: 0 } }, { t: 120, c: { c: 'in', mx: 0, mz: 0 } }, { t: 140, c: { c: 'throw', p: 0.8 } }],
+    1: [{ t: 90, c: { c: 'in', mx: 0, mz: -1 } }, { t: 200, c: { c: 'throw', p: 0.3 } }],
+  };
+  const a = netTest(Game, { seed: 77, ticks: 900, players: 2, scripts });
+  const b = netTest(Game, { seed: 77, ticks: 900, players: 2, scripts });
+  ok(a.inSync === true, 'clients diverged');
+  eq(a.final[0], b.final[0], 'runs differ');
+});
+
 console.log('== lockstep co-op (the __ttNetTest doctrine) ==');
 T('2 clients stay byte-identical across a scripted co-op run', () => {
   const scripts = {

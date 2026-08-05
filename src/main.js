@@ -110,8 +110,8 @@ function onLobbyEvent(kind, data) {
       hud && hud.toast('👋 P' + (data.pid + 1) + ' dropped — their toy goes quiet.', 'warn');
     }
   } else if (kind === 'hostlost') {
-    if (hud) { hud.toast('☎️ Lost the host. The night ends here.', 'warn'); }
-    if (game) { game.over = true; }
+    if (hud) { hud.toast('☎️ Lost the host. Last call, everybody.', 'warn'); }
+    if (game && !game.over) { game.endShift(); } // the night ends with a real story card
   } else if (kind === 'error') {
     console.warn('[net]', data);
   }
@@ -189,20 +189,45 @@ function queueCmd(cmd) {
 
 const held = new Set();
 let lastIn = { mx: 0, mz: 0, sp: false };
+let chargeT0 = null; // Space held: throw charge start (local wall time)
+
+function myPlayer() { return game && game.players[mp ? mp.myPid : 0]; }
+
+function throwable() {
+  const p = myPlayer();
+  return p && p.carry && p.carry.kind !== 'shotgun' && p.carry.kind !== 'mopheld';
+}
+
+export function chargePower() {
+  if (chargeT0 == null) { return null; }
+  return Math.min(1, (performance.now() - chargeT0) / 1000 / 0.85);
+}
+
 addEventListener('keydown', (e) => {
   if (!game || game.over) { return; }
   const k = e.key.toLowerCase();
   if (['w', 'a', 's', 'd', 'arrowup', 'arrowdown', 'arrowleft', 'arrowright', 'shift'].includes(k)) {
     held.add(k);
     e.preventDefault();
+  } else if (k === ' ') {
+    e.preventDefault();
+    if (chargeT0 == null && throwable()) { chargeT0 = performance.now(); }
   } else if (k === 'e') { queueCmd({ c: 'act' }); }
   else if (k === 'g') { queueCmd({ c: 'drop' }); }
   else if (k === 'f') { queueCmd({ c: 'fire' }); }
   else if (k === 'q') { queueCmd({ c: 'ability' }); }
   else if (k === 'm') { sfx.setMuted(!(window.__muted = !window.__muted)); }
 });
-addEventListener('keyup', (e) => { held.delete(e.key.toLowerCase()); });
-addEventListener('blur', () => held.clear());
+addEventListener('keyup', (e) => {
+  const k = e.key.toLowerCase();
+  held.delete(k);
+  if (k === ' ' && chargeT0 != null) {
+    const p = chargePower();
+    chargeT0 = null;
+    if (p != null && throwable()) { queueCmd({ c: 'throw', p }); }
+  }
+});
+addEventListener('blur', () => { held.clear(); chargeT0 = null; });
 
 function pumpInput() {
   const mx = (held.has('d') || held.has('arrowright') ? 1 : 0) - (held.has('a') || held.has('arrowleft') ? 1 : 0);
@@ -245,6 +270,8 @@ function stepMp() {
   return true;
 }
 
+let stallSeconds = 0;
+
 function frame(t) {
   requestAnimationFrame(frame);
   const dt = Math.min(0.25, (t - lastT) / 1000 || 0.016);
@@ -252,18 +279,27 @@ function frame(t) {
   if (game && !game.over) {
     accum += dt;
     let steps = 0;
+    let stepped = false;
     while (accum >= DT && steps < 8) {
       if (mp) {
-        if (!stepMp()) { accum = Math.min(accum, DT * 3); break; } // waiting on the net: cap the debt
+        if (!stepMp()) { accum = Math.min(accum, DT * 3); break; }
       } else {
         stepSolo();
       }
+      stepped = true;
       accum -= DT;
       steps++;
     }
+    stallSeconds = (mp && !stepped && accum >= DT) ? stallSeconds + dt : 0;
   }
-  if (view) { view.sync(game, dt, mp ? mp.myPid : 0); }
-  if (hud && game && !game.over) { hud.sync(game, game.players[mp ? mp.myPid : 0], dt); }
+  if (view) {
+    const p = myPlayer();
+    view.chargePreview = (chargeT0 != null && p) ? { player: p, power: chargePower() } : null;
+    view.sync(game, dt, mp ? mp.myPid : 0);
+  }
+  if (hud && game && !game.over) {
+    hud.sync(game, game.players[mp ? mp.myPid : 0], dt, chargePower(), stallSeconds);
+  }
 }
 
 function runLoops() {

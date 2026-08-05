@@ -130,17 +130,19 @@ export const REQUESTS = {
                 target: 'tourist', bark: '“That’s been my stool since Carter.”' },
   dare:       { label: 'Shots for the boys!!', needItem: 'beer', patience: 50, pay: 2400, rowdyTrigger: true,
                 bark: '“BULL RIDE WITH SPARKLERS? anyway beers”' },
+  buscheck:   { label: 'Twenty-seven separate checks', needItem: 'coffee', patience: 60, pay: 1600,
+                absurd: true, bark: '“Twenty-seven separate checks. The driver pays LAST.”' },
 };
 
 // Items that can exist in hands/world.
 export const ITEMS = {
-  beer:      { label: 'Beer',        tint: 0xd69a32 },
-  coffee:    { label: 'Coffee',      tint: 0x4a3628 },
+  beer:      { label: 'Beer',        tint: 0xd69a32, fragile: true },
+  coffee:    { label: 'Coffee',      tint: 0x4a3628, fragile: true },
   burger:    { label: 'Burger',      tint: 0x9d4e35 },
   fries:     { label: 'Fries',       tint: 0xf0e442 },
-  rangeoat:  { label: 'Range Oat',   tint: 0xf4ebdd },
-  water:     { label: 'Tap water',   tint: 0x7aa2b8 },
-  fancywater:{ label: 'Glacier still', tint: 0xbfe3f0 },
+  rangeoat:  { label: 'Range Oat',   tint: 0xf4ebdd, fragile: true },
+  water:     { label: 'Tap water',   tint: 0x7aa2b8, fragile: true },
+  fancywater:{ label: 'Glacier still', tint: 0xbfe3f0, fragile: true },
   garnish:   { label: 'Garnish',     tint: 0x6d8177 },
   feed:      { label: 'Pig feed',    tint: 0xc9a86a },
   mopheld:   { label: 'Mop',         tint: 0x8a7a5a },
@@ -170,6 +172,9 @@ export const DIRECTOR_EVENTS = {
   inspector:  { family: 'social',   weight: 0.8, cost: 20, cooldown: 999, maxPerShift: 1,
                 phases: ['break'], telegraphs: ['sedan_parks', 'clipboard'],
                 recovery: 'Keep the floor clean until cash-out' },
+  tourbus:    { family: 'tourist',  weight: 1.0, cost: 30, cooldown: 999, maxPerShift: 1,
+                phases: ['compression', 'break'], telegraphs: ['air_brakes', 'headlights_many'],
+                recovery: 'Serve them before the bus leaves' },
 };
 
 export const DIRECTOR = {
@@ -185,6 +190,10 @@ export const TUNING = {
   tickHz: 20,
   guestWalk: 2.2, pigWalk: 1.9, pigChase: 2.6,
   carrySlow: 0.85, shotgunSlow: 0.62, dashMul: 1.55, dashStamina: 2.2,
+  throwMinSpeed: 5.5, throwMaxSpeed: 12.5, throwUpMin: 3.2, throwUpMax: 5.0,
+  throwChargeSeconds: 0.85, throwGravity: 16, catchRadius: 0.75, bonkRadius: 0.55,
+  busClockSeconds: 75, busUnservedHosp: -2, busTipBonus: 0.15,
+  knockdownSeconds: 1.8,
   patienceGraceAtDoor: 20,
   eatSeconds: 22, struggleEjectSeconds: 3.0,
   spillSlipChance: 0.35, shardStress: 8,

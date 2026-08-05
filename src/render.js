@@ -1,7 +1,7 @@
 // THE LAST LOCAL — view layer. Reads sim state, never writes it. Math.random
 // is allowed here (view-only); the sim never imports this file.
 import * as THREE from '../lib/three.module.js';
-import { LAYOUT, TABLES, STATIONS, PEN_GATE, ARCHETYPES, ITEMS, EMPLOYEES, SHIFT } from './data.js';
+import { LAYOUT, TABLES, STATIONS, PEN_GATE, ARCHETYPES, ITEMS, EMPLOYEES, SHIFT, TUNING, REQUESTS } from './data.js';
 
 const W = LAYOUT[0].length;
 const H = LAYOUT.length;
@@ -35,9 +35,13 @@ export class View {
     this.pigMeshes = new Map();
     this.itemMeshes = new Map();
     this.spillMeshes = new Map();
+    this.markerSprites = new Map();
     this.playerMeshes = [];
     this.flashT = 0;
     this.smokeSprites = [];
+    this.glyphCache = new Map();
+    this.chargePreview = null;
+    this.arcLine = null;
     this.resize();
     addEventListener('resize', () => this.resize());
   }
@@ -255,13 +259,61 @@ export class View {
     moonDisc.position.set(4, 9.5, -5.8);
     S.add(moonDisc);
 
-    // players
+    // players (+ name tags when the bar has a crew)
     for (const p of game.players) {
       const m = this.makePerson(EMPLOYEES[p.key].tint, true);
+      if (game.players.length > 1) {
+        const tag = new THREE.Sprite(new THREE.SpriteMaterial({
+          map: this.textTex(EMPLOYEES[p.key].label.split(' ')[0], '#f4ebdd'),
+          transparent: true, depthWrite: false,
+        }));
+        tag.scale.set(1.5, 0.42, 1);
+        tag.position.y = 2.0;
+        m.add(tag);
+      }
       this.playerMeshes[p.pid] = m;
       S.add(m);
     }
     this.game = game;
+  }
+
+  textTex(text, color) {
+    const c = document.createElement('canvas');
+    c.width = 256; c.height = 72;
+    const g = c.getContext('2d');
+    g.font = 'bold 34px Georgia';
+    g.textAlign = 'center';
+    g.fillStyle = 'rgba(10,22,28,.72)';
+    g.beginPath();
+    g.roundRect(28, 8, 200, 54, 12);
+    g.fill();
+    g.fillStyle = color;
+    g.fillText(text, 128, 47);
+    return new THREE.CanvasTexture(c);
+  }
+
+  glyphTex(glyph) {
+    if (this.glyphCache.has(glyph)) { return this.glyphCache.get(glyph); }
+    const c = document.createElement('canvas');
+    c.width = 96; c.height = 96;
+    const g = c.getContext('2d');
+    g.fillStyle = '#f4ebdd';
+    g.strokeStyle = '#17313a';
+    g.lineWidth = 5;
+    g.beginPath();
+    g.arc(48, 42, 34, 0, Math.PI * 2);
+    g.fill(); g.stroke();
+    g.beginPath();
+    g.moveTo(38, 70); g.lineTo(48, 90); g.lineTo(58, 70);
+    g.closePath();
+    g.fill(); g.stroke();
+    g.fillStyle = '#17313a';
+    g.font = 'bold 44px Georgia';
+    g.textAlign = 'center';
+    g.fillText(glyph, 48, 58);
+    const t = new THREE.CanvasTexture(c);
+    this.glyphCache.set(glyph, t);
+    return t;
   }
 
   makePerson(tint, isPlayer = false) {
@@ -346,7 +398,18 @@ export class View {
       const moving = Math.hypot(p.mx, p.mz) > 0.01;
       m.userData.body.position.y = 0.48 + (moving ? Math.abs(Math.sin(t * 9 + p.pid)) * 0.05 : 0);
       m.rotation.y = Math.atan2(p.fx, p.fz);
-      if (p.stun > 0) { m.rotation.z = Math.sin(t * 30) * 0.15; } else { m.rotation.z = 0; }
+      if (p.stun > 1.0) {
+        // proper knockdown: flat on the floor, seeing stars
+        m.rotation.x = -1.35;
+        m.rotation.z = 0;
+        m.position.y = 0.12;
+      } else if (p.stun > 0) {
+        m.rotation.x = 0;
+        m.rotation.z = Math.sin(t * 30) * 0.15;
+      } else {
+        m.rotation.x = 0;
+        m.rotation.z = 0;
+      }
       // carried item as a small mesh in front
       this.syncCarry(m, p.carry ? p.carry.kind : null);
     }
@@ -378,14 +441,20 @@ export class View {
       if (pig.tx != null) { m.rotation.y = Math.atan2(pig.tx - pig.x, pig.tz - pig.z); }
       m.children[0].rotation.z = Math.sin(t * 7 + pig.id * 3) * 0.06;
     }
-    // items on the floor
+    // items — on the floor or mid-flight
     const liveItems = new Set();
     for (const it of game.items) {
       liveItems.add(it.id);
       let m = this.itemMeshes.get(it.id);
       if (!m) { m = this.makeItem(it.kind); this.itemMeshes.set(it.id, m); S.add(m); }
-      m.position.set(it.x, 0.15, it.z);
-      m.rotation.y = t * 0.8 + it.id;
+      m.position.set(it.x, 0.15 + (it.y || 0), it.z);
+      if (it.fly) {
+        m.rotation.x = t * 9 + it.id;
+        m.rotation.y = t * 7;
+      } else {
+        m.rotation.x = 0;
+        m.rotation.y = t * 0.8 + it.id;
+      }
     }
     for (const [id, m] of this.itemMeshes) {
       if (!liveItems.has(id)) { S.remove(m); this.itemMeshes.delete(id); }
@@ -417,6 +486,78 @@ export class View {
     }
     for (const [key, m] of this.spillMeshes) {
       if (!liveSpills.has(key)) { S.remove(m); this.spillMeshes.delete(key); }
+    }
+    // table-state bubbles (bible §34 world markers: read the room, not the rail)
+    const liveMarkers = new Set();
+    for (const party of game.parties) {
+      if (party.state === 'gone' || party.state === 'leaving') { continue; }
+      const tbl = game.tables.find((x) => x.id === party.tableId);
+      if (!tbl) { continue; }
+      let glyph = null;
+      let color = 0xf4ebdd;
+      let bounce = 0;
+      if (party.state === 'deciding' && party.decideT <= 0) {
+        glyph = '?'; color = 0xd69a32; bounce = Math.abs(Math.sin(t * 4)) * 0.14;
+      } else if (party.state === 'waitpay') {
+        glyph = '$'; color = 0x8fca8f;
+      } else if (party.state === 'complaining') {
+        glyph = '!'; color = 0x9d4e35; bounce = Math.abs(Math.sin(t * 7)) * 0.1;
+      } else if (party.state === 'eating') {
+        glyph = '♥'; color = 0xcc79a7;
+      } else {
+        const ord = game.orders.find((o) => o.partyId === party.id && o.state === 'open');
+        if (ord) {
+          glyph = '•';
+          const pct = Math.max(0, ord.tLeft / ord.total);
+          color = pct > 0.5 ? 0x6d8177 : pct > 0.25 ? 0xd69a32 : 0x9d4e35;
+          if (pct <= 0.25) { bounce = Math.abs(Math.sin(t * 7)) * 0.1; }
+        }
+      }
+      if (!glyph) { continue; }
+      liveMarkers.add(party.id);
+      let sp = this.markerSprites.get(party.id);
+      if (!sp) {
+        sp = new THREE.Sprite(new THREE.SpriteMaterial({ transparent: true, depthWrite: false }));
+        sp.scale.set(0.8, 0.8, 1);
+        this.markerSprites.set(party.id, sp);
+        S.add(sp);
+      }
+      if (sp.userData.glyph !== glyph) {
+        sp.userData.glyph = glyph;
+        sp.material.map = this.glyphTex(glyph);
+        sp.material.needsUpdate = true;
+      }
+      sp.material.color.setHex(color);
+      sp.position.set(tbl.x + 0.5, 2.25 + bounce, tbl.z + 0.5);
+    }
+    for (const [id, sp] of this.markerSprites) {
+      if (!liveMarkers.has(id)) { S.remove(sp); this.markerSprites.delete(id); }
+    }
+    // throw arc preview (view-only mirror of the sim's ballistics)
+    if (this.chargePreview) {
+      const { player, power } = this.chargePreview;
+      const spd = TUNING.throwMinSpeed + ((TUNING.throwMaxSpeed - TUNING.throwMinSpeed) * power);
+      const vy0 = TUNING.throwUpMin + ((TUNING.throwUpMax - TUNING.throwUpMin) * power);
+      const pts = [];
+      for (let i = 0; i <= 16; i++) {
+        const tau = i * 0.055;
+        const y = 1.15 + (vy0 * tau) - (0.5 * TUNING.throwGravity * tau * tau);
+        if (y < 0) { break; }
+        pts.push(new THREE.Vector3(
+          player.x + (player.fx * 0.5) + (player.fx * spd * tau),
+          y,
+          player.z + (player.fz * 0.5) + (player.fz * spd * tau)));
+      }
+      if (!this.arcLine) {
+        this.arcLine = new THREE.Line(
+          new THREE.BufferGeometry(),
+          new THREE.LineBasicMaterial({ color: 0xd69a32, transparent: true, opacity: 0.85 }));
+        S.add(this.arcLine);
+      }
+      this.arcLine.geometry.setFromPoints(pts);
+      this.arcLine.visible = true;
+    } else if (this.arcLine) {
+      this.arcLine.visible = false;
     }
     // gate visual
     this.gateMesh.rotation.z = game.gate === 'broken' ? 0.9 : 0;

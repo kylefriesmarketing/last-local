@@ -28,7 +28,8 @@ Useful URLs: `?seed=47` (fixed night) · `?autostart=1` (skip menu) ·
 first join) · `?join=CODE` (auto-join).
 
 **Controls:** WASD move · **E** context verb (the one readable action) ·
-Shift hustle · **Q** ability · G drop · **F** fire the Regulator · M mute.
+**Space (hold)** charge a throw — release to send it · Shift hustle ·
+**Q** ability · G drop · **F** fire the Regulator · M mute.
 
 ## Tests (run before ANY sim/data change — non-negotiable)
 
@@ -61,6 +62,19 @@ co-op determinism** (2 and 4 in-memory clients, byte-identical fingerprints).
   intensity budgets, ≤2 pressure families, every event telegraphed ~4s ahead
   in two channels (banner + audio cue), recovery valve after severe events,
   staffing-aware arrivals, seeded + logged decisions.
+- **The throw verb**: hold Space, release to lob whatever you're holding —
+  arc preview included. Teammates with free hands **catch** it (drink
+  relays!). A match landing by a table is a **rough delivery** (served,
+  badly — capped satisfaction, +chaos). Fragile items shatter into shards
+  on hard landings; burgers survive and become pig bait; guests you bonk
+  get filmed being bonked. Sprint through a spill and it's a full
+  **knockdown**, flat on the floor.
+- **The tour bus** (S04's essence): three parties at once on one departure
+  clock. Serve them for bonus tips; eating/paying parties fling cash and
+  run when the bus honks; the unserved leave hungry and post about it.
+- **World markers**: bubbles over tables — ? take my order · • patience
+  (green→amber→red) · $ settle up · ! complaint · ♥ eating. You read the
+  room, not the ticket rail. Name tags over players in co-op.
 - **Six tracks** with mandatory attribution; the aftermath card shows the ten
   biggest attributed swings of the night. Hospitality up can push
   gentrification up — no single score is "good".

@@ -79,6 +79,11 @@ export function cue(kind) {
     case 'fryersmoke': noise(0.6, 0.12, 500); break;
     case 'song': { const notes = [392, 494, 587, 494, 392, 330, 392]; notes.forEach((n, i) => tone(n, 0.22, 'triangle', 0.09, i * 0.19)); break; }
     case 'gameover': { [523, 494, 392, 330].forEach((n, i) => tone(n, 0.4, 'sine', 0.1, i * 0.3)); break; }
+    case 'throw': noise(0.14, 0.12, 2600); break;
+    case 'catch': tone(880, 0.06, 'square', 0.07); tone(1320, 0.08, 'square', 0.06, 0.05); break;
+    case 'bonk': tone(150, 0.16, 'square', 0.14, 0, 85); noise(0.07, 0.16, 700); break;
+    case 'tourbus': noise(0.9, 0.16, 420); tone(92, 0.7, 'sawtooth', 0.05); break;
+    case 'busgone': tone(220, 0.28, 'square', 0.1, 0, 180); tone(220, 0.4, 'square', 0.1, 0.34, 170); break;
     default: break;
   }
 }
@@ -88,4 +93,5 @@ export const EVENT_CUES = {
   complaint: 'complaint', telegraph: 'telegraph', gunfire: 'gunfire', gunout: 'gunout',
   glassbreak: 'glassbreak', pigout: 'squeal', pigeat: 'squeal', slip: 'slip',
   fryersmoke: 'fryersmoke', song: 'song', gameover: 'gameover',
+  throw: 'throw', catch: 'catch', bonk: 'bonk', tourbus: 'tourbus', busgone: 'busgone',
 };
