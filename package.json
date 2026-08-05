@@ -1,0 +1,10 @@
+{
+  "name": "the-last-local-claude",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "THE LAST LOCAL — Claude's bake-off build. Deterministic co-op bar catastrophe.",
+  "scripts": {
+    "test": "node tests/run.mjs"
+  }
+}
