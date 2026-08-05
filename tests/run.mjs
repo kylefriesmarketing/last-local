@@ -267,6 +267,13 @@ T('different scripts change the outcome (commands really travel)', () => {
   const b = netTest(Game, { seed: 47, ticks: 800, players: 2, scripts: { 0: [{ t: 60, c: { c: 'in', mx: -1, mz: 0 } }] } });
   ok(a.final[0] !== b.final[0], 'scripts should diverge outcomes');
 });
+T('a mid-run guest drop does not stall or desync the survivors', () => {
+  const r = netTest(Game, { seed: 31, ticks: 1000, players: 3,
+    scripts: { 1: [{ t: 50, c: { c: 'in', mx: 1, mz: 0 } }] },
+    dropAt: { t: 400, pid: 2 } });
+  ok(r.inSync === true, 'survivors diverged: ' + JSON.stringify(r.final));
+  ok(r.ticksRun[0] >= 1000 - INPUT_DELAY - 2, 'host stalled after drop (' + r.ticksRun[0] + ')');
+});
 
 console.log('== win/loss shape ==');
 T('endShift stamps a result with journal + decisions', () => {

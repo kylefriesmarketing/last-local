@@ -32,6 +32,18 @@
   .emp b { display:block; color:var(--cream); font-size:15px; }
   .emp i { display:block; color:var(--cold); font-size:11px; margin:2px 0 6px; }
   .emp s { display:block; text-decoration:none; color:var(--amber); font-size:11px; }
+  .coop { margin:14px 0 4px; display:flex; gap:8px; justify-content:center; align-items:center; }
+  .coop button { font-family:inherit; font-size:13px; letter-spacing:1px; padding:8px 14px;
+                 color:var(--cream); background:rgba(122,162,184,.14); cursor:pointer;
+                 border:1px solid rgba(122,162,184,.45); border-radius:6px; }
+  .coop button:hover { border-color:var(--amber); }
+  .coop input { width:74px; text-align:center; font-family:inherit; font-size:15px;
+                letter-spacing:3px; text-transform:uppercase; padding:7px 4px;
+                color:var(--amber); background:rgba(10,22,28,.8);
+                border:1px solid rgba(122,162,184,.45); border-radius:6px; }
+  #lobby { margin:10px 0 2px; }
+  #lobby-line { color:var(--cold); font-size:14px; letter-spacing:1px; }
+  #lobby-line b { color:var(--amber); font-size:20px; letter-spacing:5px; }
   button.go { font-family:inherit; font-size:19px; letter-spacing:2px; padding:11px 34px;
               color:var(--ink); background:linear-gradient(180deg,#e8b054,var(--amber));
               border:none; border-radius:6px; cursor:pointer; font-weight:bold; }
@@ -118,6 +130,15 @@
     <div class="sub">A service-industry catastrophe. Copperhead, Montana — Friday night.</div>
     <div class="emp-row" id="emp-row"></div>
     <button class="go" id="start">CLOCK IN</button>
+    <div class="coop" id="coop-row">
+      <button id="host-btn">🤝 HOST CO-OP</button>
+      <input id="join-code" placeholder="CODE" maxlength="4" autocomplete="off">
+      <button id="join-btn">JOIN</button>
+    </div>
+    <div id="lobby" style="display:none">
+      <div id="lobby-line">…</div>
+      <button class="go" id="mp-start" style="display:none; margin-top:10px; font-size:15px; padding:8px 22px;">START SHIFT</button>
+    </div>
     <div class="hint">
       <b>WASD</b> move &nbsp;·&nbsp; <b>E</b> do the thing &nbsp;·&nbsp; <b>Shift</b> hustle &nbsp;·&nbsp;
       <b>Q</b> ability &nbsp;·&nbsp; <b>G</b> drop &nbsp;·&nbsp; <b>F</b> fire (if you must)<br>

@@ -16,8 +16,16 @@ powershell -ExecutionPolicy Bypass -File "C:\Users\kylef\Downloads\New folder\th
 ```
 
 Then http://localhost:8433 — pick an employee, CLOCK IN.
+
+**Co-op (up to 4, LIVE over PeerJS):** pick your employee, hit 🤝 HOST CO-OP,
+read your friend the 4-letter room code; they type it in JOIN. Host starts
+the shift. True lockstep — everyone simulates the same night; only commands
+travel. Needs internet for signaling (vendored `lib/peerjs.min.js`, unpkg
+fallback).
+
 Useful URLs: `?seed=47` (fixed night) · `?autostart=1` (skip menu) ·
-`?auto=1` (autopilot demo — watch the game play itself).
+`?auto=1` (autopilot demo) · `?host=1` (auto-host; `&autostart2=1` starts on
+first join) · `?join=CODE` (auto-join).
 
 **Controls:** WASD move · **E** context verb (the one readable action) ·
 Shift hustle · **Q** ability · G drop · **F** fire the Regulator · M mute.
@@ -68,7 +76,8 @@ co-op determinism** (2 and 4 in-memory clients, byte-identical fingerprints).
 |---|---|
 | `src/data.js` | ALL content/tuning. Balance changes go here and only here |
 | `src/sim.js` | The ENTIRE deterministic sim. `this.rng` (LCG) only — **never Math.random in sim code**. No DOM/THREE imports. `soak()`/`autopilot()` = headless QA |
-| `src/net.js` | Lockstep core (star topology, INPUT_DELAY 6) + MemoryHub + `netTest` — node-testable, transport-agnostic |
+| `src/net.js` | TRUE lockstep core: every seat commits (possibly empty) cmds per tick; host finalizes only when all live seats spoke; first INPUT_DELAY ticks pre-sealed. MemoryHub + `netTest` — node-testable |
+| `src/net-peer.js` | PeerJS adapter (room codes, hello/seat/start, drop → markLeft) + fp desync tripwire every 100 ticks |
 | `src/render.js` | Three.js diorama. View-only; Math.random allowed |
 | `src/ui.js` | HUD/DOM: tickets, tracks, verbs, toasts, telegraphs, aftermath |
 | `src/main.js` | Boot/loop/input. Input reaches the sim ONLY via `execCommand` — the lockstep wire boundary |
@@ -100,13 +109,23 @@ headless shift · `__llPilot` the QA driver · fingerprints via
   `last-local-claude` entry; the 5-managed-server cap may force a plain
   background `node serve.mjs` + `preview_start {url}` instead.
 
+## Co-op verification record (2026-08-05)
+
+Live 2-tab test over real PeerJS/WebRTC in the Browser pane: room code dealt,
+guest seated as P2, host auto-started, both players' inputs applied on both
+peers, fingerprints at ticks 100 and 200 **byte-identical across peers**,
+zero console errors. Plus battery: 30/30 incl. 2-client, 4-client, and
+mid-run-drop lockstep tests. ⚠️ The first version of the host finalizer did
+NOT wait for guest commits — a throttled guest's commands arrived late and
+were dropped (host monologue, not lockstep). If you ever "optimize" the
+wait-gate away, that bug comes back.
+
 ## Next sessions
 
-1. **PeerJS adapter** for `net.js` (the core + determinism proof are done;
-   port the toybox `net.js` star pattern: room code, hello/seat, host echo).
-   Then a lobby card in the menu.
-2. Second playable pass on feel: carry two-hands/tray, throw arc, downed
-   state, more absurd requests (S02 wedding, S04 tour bus…).
-3. Art pass (Higgsfield textures/portraits — costs credits, confirm first).
-4. Balance battery: multi-seed autopilot matrix once a second employee AI
+1. Feel pass: carry two-hands/tray, throw arc preview, downed state, more
+   absurd requests (S02 wedding, S04 tour bus…). MP polish: waiting-on-net
+   indicator, host-lost card, rejoin.
+2. Art pass (Higgsfield textures/portraits — costs credits, confirm first).
+3. Balance battery: multi-seed autopilot matrix once a second employee AI
    exists (current pilot is the omniscient baseline: wins ~$430-500).
+4. Deploy to GitHub Pages when Kyle wants a shareable link.
