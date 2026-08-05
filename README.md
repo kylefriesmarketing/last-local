@@ -1,5 +1,10 @@
 # THE LAST LOCAL — Claude's build (the bake-off entry)
 
+**▶ PLAY IT: https://kylefriesmarketing.github.io/last-local/**
+(public repo `kylefriesmarketing/last-local`, Pages from **master** root;
+deploy = `git push origin master`. Co-op works on the live link — HTTPS
+origin + PeerJS cloud signaling verified.)
+
 Serve the tourists. Save the bar. Protect the town — or pull the shotgun and
 let the pigs sort it out. A deterministic co-op service-industry catastrophe
 in Copperhead, Montana, built from Kyle's design bible
