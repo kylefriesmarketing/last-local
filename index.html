@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>THE LAST LOCAL — Claude build</title>
+<style>
+  :root {
+    --navy:#17313a; --navy2:#0e2129; --amber:#d69a32; --cream:#f4ebdd;
+    --pine:#6d8177; --rust:#9d4e35; --cold:#7aa2b8; --ink:#0a161c;
+  }
+  * { margin:0; padding:0; box-sizing:border-box; }
+  html,body { height:100%; overflow:hidden; background:var(--ink); }
+  body { font-family:Georgia,'Times New Roman',serif; color:var(--cream); }
+  #c { position:fixed; inset:0; width:100%; height:100%; display:block; }
+  .overlay { position:fixed; inset:0; display:flex; align-items:center; justify-content:center;
+             background:radial-gradient(ellipse at 50% 35%, rgba(23,49,58,.92), rgba(10,22,28,.97));
+             z-index:40; }
+  .panel { max-width:680px; width:92%; text-align:center; padding:28px 30px;
+           border:1px solid rgba(214,154,50,.45); border-radius:10px;
+           background:linear-gradient(180deg, rgba(14,33,41,.96), rgba(10,22,28,.98));
+           box-shadow:0 0 60px rgba(214,154,50,.12), inset 0 0 40px rgba(0,0,0,.5); }
+  h1 { font-size:44px; letter-spacing:4px; color:var(--amber);
+       text-shadow:0 0 18px rgba(214,154,50,.55), 0 2px 0 #000; }
+  .sub { color:var(--cold); font-style:italic; margin:6px 0 18px; }
+  .emp-row { display:flex; gap:10px; justify-content:center; flex-wrap:wrap; margin:14px 0 20px; }
+  .emp { width:142px; padding:10px 8px; border:1px solid rgba(122,162,184,.35); border-radius:8px;
+         cursor:pointer; background:rgba(23,49,58,.55); transition:all .15s; }
+  .emp:hover { border-color:var(--amber); transform:translateY(-2px); }
+  .emp.sel { border-color:var(--amber); background:rgba(214,154,50,.16);
+             box-shadow:0 0 14px rgba(214,154,50,.35); }
+  .emp b { display:block; color:var(--cream); font-size:15px; }
+  .emp i { display:block; color:var(--cold); font-size:11px; margin:2px 0 6px; }
+  .emp s { display:block; text-decoration:none; color:var(--amber); font-size:11px; }
+  button.go { font-family:inherit; font-size:19px; letter-spacing:2px; padding:11px 34px;
+              color:var(--ink); background:linear-gradient(180deg,#e8b054,var(--amber));
+              border:none; border-radius:6px; cursor:pointer; font-weight:bold; }
+  button.go:hover { filter:brightness(1.1); }
+  .hint { margin-top:14px; font-size:12px; color:rgba(244,235,221,.55); line-height:1.7; }
+  .hint b { color:var(--amber); }
+
+  /* HUD */
+  #hud { position:fixed; inset:0; pointer-events:none; z-index:20; display:none; }
+  #topbar { position:absolute; top:10px; left:50%; transform:translateX(-50%);
+            display:flex; gap:16px; align-items:center; padding:6px 18px;
+            background:rgba(10,22,28,.82); border:1px solid rgba(214,154,50,.4); border-radius:20px; }
+  #phase { color:var(--amber); letter-spacing:2px; font-size:14px; }
+  #clock { color:var(--cream); font-size:14px; }
+  #cash  { color:#7fc97f; font-size:14px; }
+  #tickets { position:absolute; left:10px; top:64px; width:210px; display:flex;
+             flex-direction:column; gap:6px; }
+  .tk { background:rgba(244,235,221,.93); color:#222; border-radius:4px 4px 8px 8px;
+        padding:5px 8px 6px; font-size:12px; box-shadow:2px 3px 8px rgba(0,0,0,.5);
+        border-top:6px solid var(--amber); }
+  .tk.absurd { border-top-color:var(--rust); }
+  .tk .t { font-weight:bold; }
+  .tk .bar { height:4px; background:#ccc; border-radius:2px; margin-top:4px; overflow:hidden; }
+  .tk .bar i { display:block; height:100%; background:var(--pine); }
+  .tk.low .bar i { background:var(--rust); }
+  #tracks { position:absolute; right:10px; top:64px; width:130px; display:flex;
+            flex-direction:column; gap:7px; background:rgba(10,22,28,.75);
+            padding:10px; border-radius:8px; border:1px solid rgba(122,162,184,.25); }
+  .tr { font-size:10px; letter-spacing:1px; color:var(--cold); }
+  .tr .bar { height:5px; background:rgba(255,255,255,.12); border-radius:3px; margin-top:2px; overflow:hidden; }
+  .tr .bar i { display:block; height:100%; background:var(--cold); transition:width .4s; }
+  .tr.heat .bar i { background:var(--rust); }
+  .tr.hosp .bar i { background:var(--amber); }
+  .tr.loy  .bar i { background:var(--pine); }
+  .tr.gent .bar i { background:#b58cc9; }
+  .tr.chaos .bar i { background:#e2b13c; }
+  #verb { position:absolute; bottom:74px; left:50%; transform:translateX(-50%);
+          padding:7px 20px; background:rgba(10,22,28,.85); border:1px solid var(--amber);
+          border-radius:18px; color:var(--cream); font-size:15px; display:none; }
+  #verb b { color:var(--amber); }
+  #verb .prog { display:block; height:4px; background:rgba(255,255,255,.15); margin-top:5px; border-radius:2px; overflow:hidden; }
+  #verb .prog i { display:block; height:100%; background:var(--amber); }
+  #carry { position:absolute; bottom:20px; left:50%; transform:translateX(-50%);
+           display:flex; gap:10px; align-items:center; }
+  .chip { padding:5px 14px; background:rgba(10,22,28,.85); border:1px solid rgba(122,162,184,.4);
+          border-radius:14px; font-size:12px; color:var(--cream); }
+  .chip b { color:var(--amber); }
+  #toasts { position:absolute; left:12px; bottom:16px; width:300px; display:flex;
+            flex-direction:column-reverse; gap:5px; }
+  .toast { background:rgba(10,22,28,.85); border-left:3px solid var(--cold); padding:5px 9px;
+           font-size:12px; color:var(--cream); border-radius:0 6px 6px 0; opacity:.95;
+           animation:tfade 6s forwards; }
+  .toast.warn { border-left-color:var(--rust); color:#f0cfc0; }
+  .toast.good { border-left-color:var(--pine); }
+  @keyframes tfade { 0%{opacity:0; transform:translateX(-8px)} 6%{opacity:.95; transform:none}
+                     80%{opacity:.95} 100%{opacity:0} }
+  #telegraph { position:absolute; top:58px; left:50%; transform:translateX(-50%);
+               padding:6px 22px; background:rgba(157,78,53,.92); color:var(--cream);
+               font-size:14px; border-radius:16px; display:none; letter-spacing:1px;
+               box-shadow:0 0 24px rgba(157,78,53,.6); }
+  #flash { position:fixed; inset:0; background:#fff; opacity:0; pointer-events:none;
+           z-index:30; mix-blend-mode:screen; }
+  /* aftermath */
+  #after { display:none; }
+  #after .panel { max-width:560px; text-align:left; }
+  #after h1 { font-size:30px; text-align:center; }
+  #stampline { text-align:center; color:var(--cold); font-style:italic; margin-bottom:14px; }
+  .numbers { display:flex; justify-content:space-around; margin:12px 0 8px; text-align:center; }
+  .numbers div b { display:block; font-size:24px; color:var(--amber); }
+  .numbers div span { font-size:11px; color:var(--cold); letter-spacing:1px; }
+  #journal { margin:12px 0; max-height:190px; overflow-y:auto; font-size:13px; line-height:1.75;
+             border-top:1px solid rgba(122,162,184,.25); border-bottom:1px solid rgba(122,162,184,.25);
+             padding:8px 4px; }
+  #journal .up { color:#8fca8f; } #journal .down { color:#e0917a; }
+  #after .btns { display:flex; gap:12px; justify-content:center; margin-top:16px; }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+
+<div id="menu" class="overlay">
+  <div class="panel">
+    <h1>THE LAST LOCAL</h1>
+    <div class="sub">A service-industry catastrophe. Copperhead, Montana — Friday night.</div>
+    <div class="emp-row" id="emp-row"></div>
+    <button class="go" id="start">CLOCK IN</button>
+    <div class="hint">
+      <b>WASD</b> move &nbsp;·&nbsp; <b>E</b> do the thing &nbsp;·&nbsp; <b>Shift</b> hustle &nbsp;·&nbsp;
+      <b>Q</b> ability &nbsp;·&nbsp; <b>G</b> drop &nbsp;·&nbsp; <b>F</b> fire (if you must)<br>
+      Serve the tourists. Save the bar. Mind the pigs.
+    </div>
+  </div>
+</div>
+
+<div id="hud">
+  <div id="topbar"><span id="phase">PREP</span><span id="clock">0:00</span><span id="cash">$0</span></div>
+  <div id="tickets"></div>
+  <div id="tracks"></div>
+  <div id="telegraph"></div>
+  <div id="verb"></div>
+  <div id="carry"></div>
+  <div id="toasts"></div>
+</div>
+<div id="flash"></div>
+
+<div id="after" class="overlay">
+  <div class="panel">
+    <h1 id="stamp">THE LIGHTS STAY ON</h1>
+    <div id="stampline"></div>
+    <div class="numbers">
+      <div><b id="n-cash">$0</b><span>REGISTER</span></div>
+      <div><b id="n-res">0%</b><span>RESOLVED</span></div>
+      <div><b id="n-walk">0</b><span>WALKOUTS</span></div>
+      <div><b id="n-filmed">0</b><span>FILMED</span></div>
+    </div>
+    <div id="journal"></div>
+    <div class="btns">
+      <button class="go" id="again">ONE MORE SHIFT</button>
+      <button class="go" id="sameseed" style="filter:saturate(.4)">SAME NIGHT AGAIN</button>
+    </div>
+  </div>
+</div>
+
+<script type="module" src="src/main.js"></script>
+</body>
+</html>
