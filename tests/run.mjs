@@ -5,6 +5,7 @@ import {
   REQUESTS, ARCHETYPES, DIRECTOR_EVENTS, DIRECTOR, TUNING,
 } from '../src/data.js';
 import { Game, soak, autopilot, tileAt, DT } from '../src/sim.js';
+import { netTest, INPUT_DELAY } from '../src/net.js';
 
 let pass = 0; let fail = 0; const failures = [];
 function T(name, fn) {
@@ -241,6 +242,30 @@ T('honest path resolves, payment lands with attribution', () => {
   g.collect(p, tbl, party);
   ok(g.tracks.cash > 0, 'cash collected');
   ok(g.tracks.journal.some((j) => j.key === 'loyalty' && j.amount > 0), 'local loyalty attributed');
+});
+
+console.log('== lockstep co-op (the __ttNetTest doctrine) ==');
+T('2 clients stay byte-identical across a scripted co-op run', () => {
+  const scripts = {
+    0: [{ t: 60, c: { c: 'in', mx: 1, mz: 0 } }, { t: 200, c: { c: 'act' } }, { t: 400, c: { c: 'in', mx: 0, mz: 0 } }],
+    1: [{ t: 80, c: { c: 'in', mx: 0, mz: -1 } }, { t: 260, c: { c: 'act' } }, { t: 500, c: { c: 'in', mx: 0.5, mz: 0.5 } }],
+  };
+  const r = netTest(Game, { seed: 47, ticks: 1500, players: 2, scripts });
+  ok(r.inSync === true, 'clients diverged: ' + JSON.stringify(r.final));
+  eq(r.ticksRun[0], r.ticksRun[1], 'tick counts differ');
+  ok(r.ticksRun[0] >= 1500 - INPUT_DELAY - 2, 'ran the full window (' + r.ticksRun[0] + ')');
+});
+T('4 clients stay in sync', () => {
+  const r = netTest(Game, { seed: 101, ticks: 900, players: 4, scripts: {
+    2: [{ t: 100, c: { c: 'in', mx: -1, mz: 0 } }],
+    3: [{ t: 150, c: { c: 'ability' } }],
+  } });
+  ok(r.inSync === true, 'clients diverged: ' + JSON.stringify(r.final));
+});
+T('different scripts change the outcome (commands really travel)', () => {
+  const a = netTest(Game, { seed: 47, ticks: 800, players: 2, scripts: { 0: [{ t: 60, c: { c: 'in', mx: 1, mz: 0 } }] } });
+  const b = netTest(Game, { seed: 47, ticks: 800, players: 2, scripts: { 0: [{ t: 60, c: { c: 'in', mx: -1, mz: 0 } }] } });
+  ok(a.final[0] !== b.final[0], 'scripts should diverge outcomes');
 });
 
 console.log('== win/loss shape ==');
