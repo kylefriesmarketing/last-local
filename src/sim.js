@@ -87,8 +87,9 @@ export class Game {
     this.stats = { partiesSeated: 0, partiesResolved: 0, walkouts: 0, filmed: 0, pigMeals: 0 };
     this.director = {
       budget: 0, valveT: 0, used: {}, cooldown: {}, pending: [],
-      famActive: {}, tick1: 0,
+      famActive: {}, tick1: 0, headlineDone: {}, prepDone: false,
     };
+    this.phasePrev = null;
     // two spare kegs wait in the lot from open (the taps will not last the night)
     this.items.push({ id: this.nextId++, kind: 'keg', x: 2.5, z: 2.5 });
     this.items.push({ id: this.nextId++, kind: 'keg', x: 3.5, z: 1.5 });
@@ -848,21 +849,59 @@ export class Game {
       pe.tLeft -= 1;
       if (pe.tLeft <= 0) { d.pending.splice(i, 1); this.fireEvent(pe.key); }
     }
-    if (phase === 'prep' || phase === 'last_call' || this.over) { return; }
-    if (d.valveT > 0) { return; }
-    // mess feeds intensity: heavy mess slows NEW pressure (recovery valve logic)
+    // ── authored beats first: the shift's shape is not left to a dice roll ──
+    // Prep exposes one known fault (bible §7). The weighted path skips atPrep
+    // modules entirely, so without this the "something is already broken" line
+    // in the opening toast was a lie — dishfault never fired in any seed.
+    if (phase === 'prep') {
+      if (!d.prepDone && this.time >= DIRECTOR.prepFault.at) {
+        d.prepDone = true;
+        this.schedule(this.pick(DIRECTOR.prepFault.pool.slice()), 'prep');
+      }
+      return;
+    }
+    if (this.over) { return; }
+    if (phase === 'last_call') { return; }
+    const activeFams = Object.keys(d.famActive).filter((f) => d.famActive[f] > this.time - 45);
+    const famOpen = (key) => {
+      const e = DIRECTOR_EVENTS[key];
+      return e.service || activeFams.includes(e.family)
+        || activeFams.length < DIRECTOR.maxActiveFamilies;
+    };
+    // Compression fails one system; the break point lands one headline. Both are
+    // guaranteed and budget-free — the budget buys EXTRA friction, never the plot.
+    // A headline still obeys the ≤2 pressure-family rule: if the room is already
+    // carrying two disasters it WAITS for a slot rather than piling on a third.
+    const hl = DIRECTOR.headline[phase];
+    if (hl && !d.headlineDone[phase]) {
+      const ph = SHIFT.phases.find((q) => q.id === phase);
+      if (this.time - ph.start >= hl.at) {
+        const live = hl.pool.filter((k) => (d.used[k] || 0) < DIRECTOR_EVENTS[k].maxPerShift);
+        const pool = live.filter(famOpen);
+        if (pool.length) {
+          d.headlineDone[phase] = true;
+          this.schedule(this.pick(pool), 'headline');
+          return;
+        }
+        if (!live.length) { d.headlineDone[phase] = true; } // nothing left to headline with
+        else { return; }                                    // wait for a family slot
+      }
+    }
+    // mess feeds intensity: heavy mess and the post-spike valve hold back NEW
+    // DISASTERS only. Service keeps arriving — a bar that stops filling because
+    // the floor is wet is a spreadsheet, not a Friday night.
     const mess = this.messScore();
-    if (mess > 26) { return; }
-    const active = Object.keys(d.famActive).filter((f) => d.famActive[f] > this.time - 45);
+    const held = d.valveT > 0 || mess > 26;
     const candidates = [];
     for (const key of Object.keys(DIRECTOR_EVENTS)) {
       const e = DIRECTOR_EVENTS[key];
       if (e.atPrep) { continue; }
+      if (held && !e.service) { continue; }
       if (e.phases && !e.phases.includes(phase)) { continue; }
       if ((d.used[key] || 0) >= e.maxPerShift) { continue; }
       if ((d.cooldown[key] || 0) > 0) { continue; }
       if (e.cost > d.budget) { continue; }
-      if (!active.includes(e.family) && active.length >= DIRECTOR.maxActiveFamilies) { continue; }
+      if (!famOpen(key)) { continue; }
       if (e.needsArchetype && !this.parties.some((q) => q.arche === e.needsArchetype && (q.state === 'deciding' || q.state === 'ordered' || q.state === 'eating'))) { continue; }
       candidates.push({ key, e });
     }
@@ -873,13 +912,23 @@ export class Game {
     let chosen = candidates[0];
     for (const c of candidates) { roll -= c.e.weight; if (roll <= 0) { chosen = c; break; } }
     d.budget -= chosen.e.cost;
-    d.used[chosen.key] = (d.used[chosen.key] || 0) + 1;
-    d.cooldown[chosen.key] = chosen.e.cooldown;
-    d.famActive[chosen.e.family] = this.time;
-    if (chosen.e.cost >= 20) { d.valveT = DIRECTOR.recoveryValveSeconds; }
-    this.decisionLog.push({ t: this.time | 0, key: chosen.key, seed: this.rngState });
-    for (const tg of chosen.e.telegraphs) { this.ev('telegraph', { key: tg, event: chosen.key }); }
-    d.pending.push({ key: chosen.key, tLeft: DIRECTOR.telegraphLeadSeconds });
+    this.schedule(chosen.key, 'budget');
+  }
+
+  /** Book a module: bookkeeping, both telegraph channels, then the lead-in wait.
+   *  Every path into the disaster web goes through here so the fairness rule
+   *  ("announces itself through at least two channels") can never be bypassed. */
+  schedule(key, why) {
+    const d = this.director;
+    const e = DIRECTOR_EVENTS[key];
+    if (!e) { return; }
+    d.used[key] = (d.used[key] || 0) + 1;
+    d.cooldown[key] = e.cooldown;
+    if (!e.service) { d.famActive[e.family] = this.time; }
+    if (e.cost >= 20) { d.valveT = DIRECTOR.recoveryValveSeconds; }
+    this.decisionLog.push({ t: this.time | 0, key, why, seed: this.rngState });
+    for (const tg of e.telegraphs) { this.ev('telegraph', { key: tg, event: key }); }
+    d.pending.push({ key, tLeft: DIRECTOR.telegraphLeadSeconds });
   }
 
   fireEvent(key) {
@@ -1139,6 +1188,22 @@ export class Game {
           this.track('chaos', 4, 'evt.smoke', 'smoke cleared a table');
           this.partyLeave(victim, 'smoke');
           this.stats.walkouts++;
+        }
+      }
+    }
+
+    // phase turns are EVENTS, not a changing label: the view gets a beat to
+    // score (card + light + audio) and last call converts pressure to closure.
+    const ph = this.phaseId();
+    if (ph !== this.phasePrev) {
+      const from = this.phasePrev;
+      this.phasePrev = ph;
+      if (from !== null) {
+        this.ev('phase', { id: ph, from });
+        if (ph === 'last_call') {
+          for (const q of this.parties) {
+            if (q.state === 'eating') { q.eatT *= DIRECTOR.lastCallEatMul; }
+          }
         }
       }
     }

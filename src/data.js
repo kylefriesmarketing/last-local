@@ -155,7 +155,14 @@ export const ITEMS = {
 // ── Director modules (bible §12 + schema B-DirectorEvent) ──────────────────
 // Every module: 2+ telegraphs, a recovery hook, family, cooldown, budget cost.
 export const DIRECTOR_EVENTS = {
-  arrivals:   { family: 'tourist',  weight: 3.0, cost: 8,  cooldown: 18, maxPerShift: 99,
+  // arrivals are SERVICE, not pressure: cost 0 so the intensity budget banks for
+  // the disaster web. Before this, arrivals (weight 3, every 18s) ate the whole
+  // budget and the tour bus / fryer / pigs almost never fired — measured across
+  // three seeds: 34 of 40 director decisions were "another table sat down".
+  // `service: true` = the baseline queue, not a pressure family. It never holds
+  // one of the two pressure slots and never waits out the recovery valve: in
+  // this genre the room keeps filling WHILE everything burns. That is the joke.
+  arrivals:   { family: 'tourist',  weight: 3.0, cost: 0,  cooldown: 18, maxPerShift: 99, service: true,
                 phases: ['warm', 'compression', 'break'], telegraphs: ['headlights', 'doorchime'] },
   dishfault:  { family: 'failure',  weight: 1.0, cost: 10, cooldown: 999, maxPerShift: 1, atPrep: true,
                 telegraphs: ['gurgle', 'puddle_shine'], recovery: 'Repair at the dishwasher' },
@@ -189,6 +196,18 @@ export const DIRECTOR = {
   recoveryValveSeconds: 30,      // after a severe event, no new module
   telegraphLeadSeconds: 4,       // tells land before the event bites
   messWeight: { spill: 3, shards: 4, pigLoose: 8, smokingFryer: 10, unresolvedOrder: 2 },
+  // ── authored dramaturgy (bible §7) ──────────────────────────────────────
+  // Prep "exposes one known fault" — it is not a random roll, it is the shift's
+  // opening line. The budget path deliberately skips atPrep modules.
+  prepFault: { at: 12, pool: ['dishfault'] },
+  // Compression "one system fails"; Break "one headline event". These are
+  // GUARANTEED and bypass the budget — the budget governs *extra* friction, not
+  // whether the night has a shape. Seconds are measured into the phase.
+  headline: {
+    compression: { at: 42, pool: ['fryersmoke', 'piggate', 'kegdrop'] },
+    break:       { at: 26, pool: ['tourbus', 'inspector', 'piggate', 'fryersmoke'] },
+  },
+  lastCallEatMul: 0.55,          // last call: everyone finishes up so they can pay
 };
 
 export const TUNING = {

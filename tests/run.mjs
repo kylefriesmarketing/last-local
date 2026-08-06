@@ -132,15 +132,44 @@ T('telegraphs precede every director effect by the lead time', () => {
   }
 });
 T('at most two pressure families active (decision log audit)', () => {
-  const r = soak({ seed: 31, autopilot: true });
-  const windows = [];
-  for (const d of r.decisionLog) {
-    const fam = DIRECTOR_EVENTS[d.key].family;
-    windows.push({ t: d.t, fam });
+  // service modules (arrivals) are the baseline queue, NOT a pressure family —
+  // counting them made the rule trivially satisfiable by "arrivals + one disaster"
+  for (const seed of SEEDS) {
+    const r = soak({ seed, autopilot: true });
+    const windows = r.decisionLog
+      .filter((d) => !DIRECTOR_EVENTS[d.key].service)
+      .map((d) => ({ t: d.t, fam: DIRECTOR_EVENTS[d.key].family }));
+    for (const w of windows) {
+      const active = new Set(windows.filter((o) => o.t <= w.t && o.t > w.t - 45).map((o) => o.fam));
+      ok(active.size <= DIRECTOR.maxActiveFamilies,
+        'seed ' + seed + ': families ' + [...active].join(',') + ' at t=' + w.t);
+    }
   }
-  for (const w of windows) {
-    const active = new Set(windows.filter((o) => o.t <= w.t && o.t > w.t - 45).map((o) => o.fam));
-    ok(active.size <= DIRECTOR.maxActiveFamilies, 'families ' + [...active].join(',') + ' at t=' + w.t);
+});
+T('the shift has an authored shape: prep fault + a headline in compression and break', () => {
+  for (const seed of SEEDS) {
+    const r = soak({ seed, autopilot: true });
+    const prep = r.decisionLog.filter((d) => d.why === 'prep');
+    const heads = r.decisionLog.filter((d) => d.why === 'headline');
+    eq(prep.length, 1, 'seed ' + seed + ': exactly one prep fault');
+    ok(DIRECTOR.prepFault.pool.includes(prep[0].key), 'prep fault from the authored pool');
+    ok(heads.length >= 2, 'seed ' + seed + ': a headline per pressure phase (' + heads.length + ')');
+    // and the shift really breaks something, not just seats more tourists
+    const disasters = r.decisionLog.filter((d) => !DIRECTOR_EVENTS[d.key].service).length;
+    ok(disasters >= 4, 'seed ' + seed + ': disaster web ran (' + disasters + ' modules)');
+  }
+});
+T('a headline still announces itself in two channels', () => {
+  const g = new Game({ seed: 31 });
+  const tg = [];
+  for (let i = 0; i < SHIFT.duration * TUNING.tickHz && !g.over; i++) {
+    g.tick();
+    for (const e of g.view) { if (e.kind === 'telegraph') { tg.push(e); } }
+    g.view.length = 0;
+  }
+  for (const d of g.decisionLog) {
+    const n = tg.filter((x) => x.event === d.key && Math.abs(x.t - d.t) <= 1).length;
+    ok(n >= 2, d.key + ' (' + d.why + ') fired with ' + n + ' telegraph channel(s)');
   }
 });
 T('exact seed reproduces director choices', () => {
