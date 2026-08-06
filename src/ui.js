@@ -20,6 +20,8 @@ const TELEGRAPH_LINES = {
   clipboard: 'Somebody just uncapped a pen.',
   air_brakes: 'Air brakes hiss out on the highway…',
   headlights_many: 'That is a LOT of headlights.',
+  truck_rumble: 'A delivery truck rumbles up the lot…',
+  crate_thud: 'Something heavy just hit the gravel.',
 };
 
 const EVENT_TOASTS = {
@@ -49,6 +51,11 @@ const EVENT_TOASTS = {
   catch:       { text: '🧤 CAUGHT. The crew has hands.', cls: 'good' },
   tourbus:     { text: '🚌 TOUR BUS. Three parties. One clock.', cls: 'warn' },
   busgone:     { text: '🚌 The bus pulls out. Whoever missed it, missed it.', cls: '' },
+  keglow:      { text: '🍺 The keg is running low.', cls: '' },
+  kegdry:      { text: '🛢️ TAPS DRY — kegs are out in the lot!', cls: 'warn' },
+  kegtapped:   { text: '🍻 Fresh keg tapped. The taps live again.', cls: 'good' },
+  kegdrop:     { text: '🚚 Keg delivery — two fresh ones in the lot.', cls: 'good' },
+  tooheavy:    { text: '🏋️ Too heavy to throw. Physics wins this one.', cls: '' },
 };
 
 export class Hud {

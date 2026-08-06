@@ -35,6 +35,10 @@ first join) · `?join=CODE` (auto-join).
 **Controls:** WASD move · **E** context verb (the one readable action) ·
 **Space (hold)** charge a throw — release to send it · Shift hustle ·
 **Q** ability · G drop · **F** fire the Regulator · M mute.
+**Phones work**: virtual stick + DO/THROW/Q/DROP buttons appear on touch
+devices (full-tilt stick = hustle). Solo players can **hire a temp** — a
+deterministic bot teammate (menu checkbox or `?bot=1`) who takes orders,
+pours, delivers, collects, and hauls kegs.
 
 ## Tests (run before ANY sim/data change — non-negotiable)
 
@@ -80,6 +84,10 @@ co-op determinism** (2 and 4 in-memory clients, byte-identical fingerprints).
 - **World markers**: bubbles over tables — ? take my order · • patience
   (green→amber→red) · $ settle up · ! complaint · ♥ eating. You read the
   room, not the ticket rail. Name tags over players in co-op.
+- **The keg loop**: the taps hold ten pours. Dry taps mean somebody hauls a
+  keg in from the lot — heavy, half speed, unthrowable, pig-proof (Cal
+  hauls at near full speed: his moment). A mid-shift keg delivery event
+  restocks the lot. Bot teammates run kegs too.
 - **Six tracks** with mandatory attribution; the aftermath card shows the ten
   biggest attributed swings of the night. Hospitality up can push
   gentrification up — no single score is "good".

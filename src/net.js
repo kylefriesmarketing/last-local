@@ -141,11 +141,13 @@ export class MemoryHub {
 export function netTest(GameCtor, opts = {}) {
   const seed = opts.seed || 47;
   const ticks = opts.ticks || 1200;
-  const playerCount = opts.players || 2;
+  const playerCount = opts.players || 2; // HUMAN seats (lockstep participants)
   const scripts = opts.scripts || {}; // {pid: [{t, c}...]}
   const dropAt = opts.dropAt || null; // {t, pid}
   const defs = [];
   for (let i = 0; i < playerCount; i++) { defs.push({ employeeKey: i === 0 ? 'mara' : 'jo' }); }
+  // bot seats live inside the sim — every client simulates them identically
+  for (const d of (opts.extraDefs || [])) { defs.push(d); }
 
   const hub = new MemoryHub();
   const clients = [];

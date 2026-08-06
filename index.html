@@ -106,6 +106,25 @@
                box-shadow:0 0 24px rgba(157,78,53,.6); }
   #flash { position:fixed; inset:0; background:#fff; opacity:0; pointer-events:none;
            z-index:30; mix-blend-mode:screen; }
+  #bot-row { display:block; margin:2px 0 12px; font-size:13px; color:var(--cold); cursor:pointer; }
+  #bot-row input { accent-color:var(--amber); }
+  /* touch controls */
+  #touch { position:fixed; inset:0; display:none; pointer-events:none; z-index:25; }
+  #t-stick { position:absolute; left:26px; bottom:96px; width:118px; height:118px;
+             border-radius:50%; border:2px solid rgba(122,162,184,.5);
+             background:rgba(10,22,28,.45); pointer-events:auto; touch-action:none; }
+  #t-knob { position:absolute; left:50%; top:50%; width:52px; height:52px; margin:-26px 0 0 -26px;
+            border-radius:50%; background:rgba(214,154,50,.75); }
+  .t-btn { position:absolute; width:66px; height:66px; border-radius:50%;
+           border:2px solid rgba(214,154,50,.6); background:rgba(10,22,28,.6);
+           color:var(--cream); font-family:Georgia,serif; font-size:13px; font-weight:bold;
+           display:flex; align-items:center; justify-content:center;
+           pointer-events:auto; touch-action:none; user-select:none; -webkit-user-select:none; }
+  #t-act   { right:28px;  bottom:150px; width:84px; height:84px; font-size:17px;
+             border-color:var(--amber); background:rgba(214,154,50,.28); }
+  #t-throw { right:126px; bottom:104px; }
+  #t-q     { right:34px;  bottom:62px; }
+  #t-drop  { right:126px; bottom:24px; }
   /* aftermath */
   #after { display:none; }
   #after .panel { max-width:560px; text-align:left; }
@@ -129,6 +148,7 @@
     <h1>THE LAST LOCAL</h1>
     <div class="sub">A service-industry catastrophe. Copperhead, Montana — Friday night.</div>
     <div class="emp-row" id="emp-row"></div>
+    <label id="bot-row"><input type="checkbox" id="bot-check"> 🤝 hire a temp (bot teammate, solo only)</label>
     <button class="go" id="start">CLOCK IN</button>
     <div class="coop" id="coop-row">
       <button id="host-btn">🤝 HOST CO-OP</button>
@@ -157,6 +177,13 @@
   <div id="toasts"></div>
 </div>
 <div id="flash"></div>
+<div id="touch">
+  <div id="t-stick"><div id="t-knob"></div></div>
+  <div class="t-btn" id="t-act">DO</div>
+  <div class="t-btn" id="t-throw">THROW</div>
+  <div class="t-btn" id="t-q">Q</div>
+  <div class="t-btn" id="t-drop">DROP</div>
+</div>
 
 <div id="after" class="overlay">
   <div class="panel">

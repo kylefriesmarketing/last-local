@@ -55,6 +55,7 @@ export class Game {
         pid: i, key: d.employeeKey, e, x: s.x + 0.5, z: s.z + 0.5,
         mx: 0, mz: 0, sprint: false, fx: 0, fz: 1, stamina: 1,
         carry: null, busy: null, stun: 0, abilityCd: 0, calBoost: 0,
+        isBot: !!d.isBot, botWait: 0,
         stats: { served: 0, prepped: 0, cleaned: 0, ejections: 0, shells: 0 },
       };
     });
@@ -74,6 +75,7 @@ export class Game {
     this.fryer = { smoking: false, t: 0 };
     this.shotgun = { stowed: true, shells: TUNING.shotgunShells };
     this.busClock = null;
+    this.tapsKeg = TUNING.kegPours;
     this.nextId = 1;
     this.tracks = {
       cash: 0, hospitality: 50, loyalty: 50, heat: 0, gentrification: 20, chaos: 0,
@@ -84,6 +86,9 @@ export class Game {
       budget: 0, valveT: 0, used: {}, cooldown: {}, pending: [],
       famActive: {}, tick1: 0,
     };
+    // two spare kegs wait in the lot from open (the taps will not last the night)
+    this.items.push({ id: this.nextId++, kind: 'keg', x: 2.5, z: 2.5 });
+    this.items.push({ id: this.nextId++, kind: 'keg', x: 3.5, z: 1.5 });
     this.inspector = { present: false, violations: 0, partyId: null, seen: {} };
   }
 
@@ -125,7 +130,9 @@ export class Game {
 
   // ── the throw verb (bible §8: charge and release) ────────────────────────
   throwItem(p, power01) {
-    if (!p.carry || p.carry.kind === 'shotgun' || p.carry.kind === 'mopheld' || p.busy) { return; }
+    if (!p.carry || p.busy) { return; }
+    if (p.carry.kind === 'shotgun' || p.carry.kind === 'mopheld') { return; }
+    if (ITEMS[p.carry.kind] && ITEMS[p.carry.kind].heavy) { this.ev('tooheavy'); return; }
     const kind = p.carry.kind;
     p.carry = null;
     const pw = Math.max(0, Math.min(1, power01 || 0));
@@ -290,6 +297,28 @@ export class Game {
   }
 
   stationAction(p, key, s) {
+    if (key === 'taps') {
+      if (this.tapsKeg <= 0) {
+        if (p.carry && p.carry.kind === 'keg') {
+          return { verb: 'Tap the fresh keg', act: () => this.startBusy(p, 'Tapping keg', TUNING.kegTapSeconds, () => {
+            p.carry = null;
+            this.tapsKeg = TUNING.kegPours;
+            this.ev('kegtapped');
+          }) };
+        }
+        return { verb: 'Taps are DRY — bring a keg from the lot' };
+      }
+      if (!p.carry) {
+        return { verb: s.verb, act: () => this.startBusy(p, s.label, s.time * p.e.prepMul, () => {
+          p.carry = { kind: 'beer' };
+          p.stats.prepped++;
+          this.tapsKeg--;
+          if (this.tapsKeg === 2) { this.ev('keglow'); }
+          if (this.tapsKeg === 0) { this.ev('kegdry'); }
+        }) };
+      }
+      return null;
+    }
     if (key === 'shotgun') {
       if (this.shotgun.stowed && !p.carry) {
         return { verb: 'Reach under the bar', act: () => this.startBusy(p, 'Reaching under', s.time, () => {
@@ -673,6 +702,7 @@ export class Game {
     let best = null; let bd = 99;
     for (const it of this.items) {
       if (it.held || it.fly || it.kind === 'shotgun') { continue; }
+      if (ITEMS[it.kind] && ITEMS[it.kind].heavy) { continue; } // even pigs have limits
       const d = Math.hypot(it.x - pig.x, it.z - pig.z);
       if (d < bd) { bd = d; best = it; }
     }
@@ -796,6 +826,10 @@ export class Game {
         for (const q of fresh) { q.bus = true; }
         this.ev('tourbus', { parties: spawned });
       }
+    } else if (key === 'kegdrop') {
+      this.items.push({ id: this.nextId++, kind: 'keg', x: 2.5, z: 3.5 });
+      this.items.push({ id: this.nextId++, kind: 'keg', x: 3.5, z: 3.0 });
+      this.ev('kegdrop');
     }
   }
 
@@ -898,6 +932,7 @@ export class Game {
       if (p.abilityCd > 0) { p.abilityCd -= dt; }
       if (p.calBoost > 0) { p.calBoost -= dt; }
       if (p.stun > 0) { p.stun -= dt; continue; }
+      if (p.isBot) { this.botTick(p, dt); }
       if (p.busy) {
         p.busy.tLeft -= dt;
         if (p.busy.tLeft <= 0) { const d = p.busy.done; p.busy = null; d(); }
@@ -905,7 +940,9 @@ export class Game {
       }
       let speed = p.e.speed;
       if (p.carry) {
-        speed *= p.carry.kind === 'shotgun' ? TUNING.shotgunSlow : (p.calBoost > 0 ? 1 : TUNING.carrySlow);
+        speed *= p.carry.kind === 'shotgun' ? TUNING.shotgunSlow
+          : p.carry.kind === 'keg' ? (p.calBoost > 0 ? 0.82 : TUNING.kegSlow)
+            : (p.calBoost > 0 ? 1 : TUNING.carrySlow);
       }
       if (p.sprint && p.stamina > 0.05) {
         speed *= TUNING.dashMul;
@@ -1017,6 +1054,78 @@ export class Game {
     if (this.cb.gameOver) { this.cb.gameOver(this.result); }
   }
 
+  // ── service brain, shared by the temp bot and the QA autopilot ───────────
+  serviceCandidates(p) {
+    const out = [];
+    const openOrders = this.orders.filter((o) => o.state === 'open');
+    if (p.carry && p.carry.kind !== 'mopheld' && p.carry.kind !== 'feed'
+      && p.carry.kind !== 'shotgun' && p.carry.kind !== 'keg') {
+      const match = openOrders.find((o) => {
+        const req = REQUESTS[o.reqKey];
+        return p.carry.kind === req.needItem || (req.substitute && p.carry.kind === req.substitute.item);
+      });
+      if (match) {
+        const t = this.tables.find((x) => x.id === match.tableId);
+        if (t) { out.push({ x: t.x, z: t.z + 1 }); }
+      } else {
+        out.push({ drop: true });
+      }
+      return out;
+    }
+    if (p.carry && p.carry.kind === 'keg') {
+      out.push({ x: STATIONS.taps.x, z: STATIONS.taps.z - 1 });
+      return out;
+    }
+    if (this.tapsKeg <= 0 && !p.carry) {
+      const keg = this.items.find((i) => i.kind === 'keg' && !i.fly);
+      if (keg) { out.push({ x: keg.x | 0, z: keg.z | 0 }); }
+    }
+    if (openOrders.length && !p.carry) {
+      const urgent = openOrders.slice().sort((a, b) => a.tLeft - b.tLeft)[0];
+      const req = REQUESTS[urgent.reqKey];
+      const wanted = req.needItem || 'beer';
+      let st = Object.values(STATIONS).find((s) => s.makes === wanted)
+        || (req.substitute ? Object.values(STATIONS).find((s) => s.makes === req.substitute.item) : null);
+      if (st === STATIONS.taps && this.tapsKeg <= 0) { st = null; }
+      if (st) { out.push({ x: st.x, z: st.z - 1 }); }
+    }
+    for (const q of this.parties) {
+      if ((q.state === 'deciding' && q.decideT <= 0)
+        || q.state === 'waitpay'
+        || (q.state === 'complaining' && !this.orders.some((o) => o.partyId === q.id))) {
+        const t = this.tables.find((x) => x.partyId === q.id);
+        if (t) { out.push({ x: t.x, z: t.z + 1 }); }
+      }
+    }
+    return out;
+  }
+
+  // The hired temp: a sim-internal teammate. Deterministic (this.rng only),
+  // so bot seats are free in MP — every client simulates the same coworker.
+  // Hesitation between jobs keeps it hired-help, not omniscient.
+  botTick(p, dt) {
+    if (p.busy || p.stun > 0) { return; }
+    if (p.botWait > 0) { p.botWait -= dt; return; }
+    const cands = this.serviceCandidates(p);
+    if (!cands.length) { return; }
+    if (cands[0].drop) {
+      this.dropCarry(p, true);
+      p.botWait = 0.5;
+      return;
+    }
+    let goal = cands[0]; let bd = 1e9;
+    for (const c of cands) {
+      const d = Math.hypot(c.x + 0.5 - p.x, c.z + 0.5 - p.z);
+      if (d < bd) { bd = d; goal = c; }
+    }
+    if ((p.x | 0) === goal.x && (p.z | 0) === goal.z && bd < 0.45) {
+      this.doContext(p);
+      p.botWait = TUNING.botWaitMin + (this.rng() * (TUNING.botWaitMax - TUNING.botWaitMin));
+    } else {
+      this.walkTo(p, goal.x + 0.5, goal.z + 0.5, p.e.speed * 0.92, dt);
+    }
+  }
+
   // ── QA: deterministic fingerprint (toybox fp pattern) ────────────────────
   fingerprint() {
     let h = 2166136261 >>> 0;
@@ -1060,47 +1169,15 @@ export function soak(opts = {}) {
 }
 
 // Tiny deterministic autopilot: greedy nearest-actionable QA driver that
-// exercises the whole loop headlessly (take, prep, deliver, collect). Not an
-// AI teammate.
+// exercises the whole loop headlessly (take, prep, deliver, collect, keg
+// runs). Shares serviceCandidates with the temp bot; unlike the bot it never
+// hesitates and consumes no rng — the omniscient baseline.
 export function autopilot(g) {
   const p = g.players[0];
   if (p.busy || p.stun > 0) { return; }
-  const openOrders = g.orders.filter((o) => o.state === 'open');
-  const tableOf = (partyId) => g.tables.find((x) => x.partyId === partyId);
-  const candidates = [];
-
-  if (p.carry && p.carry.kind !== 'mopheld' && p.carry.kind !== 'feed' && p.carry.kind !== 'shotgun') {
-    const match = openOrders.find((o) => {
-      const req = REQUESTS[o.reqKey];
-      return p.carry.kind === req.needItem || (req.substitute && p.carry.kind === req.substitute.item);
-    });
-    if (match) {
-      const t = g.tables.find((x) => x.id === match.tableId);
-      if (t) { candidates.push({ x: t.x, z: t.z + 1 }); }
-    } else {
-      g.execCommand(0, { c: 'drop' });
-      return;
-    }
-  } else {
-    if (openOrders.length) {
-      // most urgent order first
-      const urgent = openOrders.slice().sort((a, b) => a.tLeft - b.tLeft)[0];
-      const req = REQUESTS[urgent.reqKey];
-      const wanted = req.needItem || 'beer';
-      const st = Object.values(STATIONS).find((s) => s.makes === wanted)
-        || (req.substitute ? Object.values(STATIONS).find((s) => s.makes === req.substitute.item) : null);
-      if (st) { candidates.push({ x: st.x, z: st.z - 1 }); }
-    }
-    for (const q of g.parties) {
-      if ((q.state === 'deciding' && q.decideT <= 0)
-        || q.state === 'waitpay'
-        || (q.state === 'complaining' && !g.orders.some((o) => o.partyId === q.id))) {
-        const t = tableOf(q.id);
-        if (t) { candidates.push({ x: t.x, z: t.z + 1 }); }
-      }
-    }
-  }
+  const candidates = g.serviceCandidates(p);
   if (!candidates.length) { g.setInput(0, 0, 0, false); return; }
+  if (candidates[0].drop) { g.execCommand(0, { c: 'drop' }); return; }
   let goal = candidates[0]; let bd = 1e9;
   for (const c of candidates) {
     const d = Math.hypot(c.x + 0.5 - p.x, c.z + 0.5 - p.z);

@@ -121,7 +121,12 @@ function onLobbyEvent(kind, data) {
 function startSolo() {
   if (game) { return; }
   const seed = parseInt(params.get('seed'), 10) || ((Math.random() * 99999) | 1);
-  beginGame({ seed, players: [{ employeeKey: chosenEmp }] }, 0, false);
+  const players = [{ employeeKey: chosenEmp }];
+  const botOn = params.get('bot') === '1' || (document.getElementById('bot-check') || {}).checked;
+  if (botOn) {
+    players.push({ employeeKey: chosenEmp === 'cal' ? 'dottie' : 'cal', isBot: true });
+  }
+  beginGame({ seed, players }, 0, false);
 }
 
 function beginGame(cfg, myPid, isMp) {
@@ -229,14 +234,77 @@ addEventListener('keyup', (e) => {
 });
 addEventListener('blur', () => { held.clear(); chargeT0 = null; });
 
+const touchVec = { mx: 0, mz: 0 };
+
 function pumpInput() {
-  const mx = (held.has('d') || held.has('arrowright') ? 1 : 0) - (held.has('a') || held.has('arrowleft') ? 1 : 0);
-  const mz = (held.has('s') || held.has('arrowdown') ? 1 : 0) - (held.has('w') || held.has('arrowup') ? 1 : 0);
-  const sp = held.has('shift');
+  // keys + virtual stick share one channel; quantized so lockstep traffic
+  // doesn't spam a command per micro-wiggle
+  let mx = (held.has('d') || held.has('arrowright') ? 1 : 0) - (held.has('a') || held.has('arrowleft') ? 1 : 0);
+  let mz = (held.has('s') || held.has('arrowdown') ? 1 : 0) - (held.has('w') || held.has('arrowup') ? 1 : 0);
+  mx = Math.max(-1, Math.min(1, mx + touchVec.mx));
+  mz = Math.max(-1, Math.min(1, mz + touchVec.mz));
+  mx = Math.round(mx * 8) / 8;
+  mz = Math.round(mz * 8) / 8;
+  const sp = held.has('shift') || Math.hypot(touchVec.mx, touchVec.mz) > 0.96;
   if (mx !== lastIn.mx || mz !== lastIn.mz || sp !== lastIn.sp) {
     lastIn = { mx, mz, sp };
     queueCmd({ c: 'in', mx, mz, sp });
   }
+}
+
+// ── touch controls (the live link WILL get opened on phones) ───────────────
+function setupTouch() {
+  // listeners always bind (testable, harmless when hidden); only the overlay
+  // visibility is gated on real touch hardware
+  const hasTouch = ('ontouchstart' in window) || navigator.maxTouchPoints > 0;
+  if (hasTouch) { $('touch').style.display = 'block'; }
+  const stick = $('t-stick');
+  const knob = $('t-knob');
+  let sid = null;
+  let cx = 0;
+  let cy = 0;
+  stick.addEventListener('pointerdown', (e) => {
+    sid = e.pointerId; cx = e.clientX; cy = e.clientY;
+    stick.setPointerCapture(sid);
+    e.preventDefault();
+  });
+  stick.addEventListener('pointermove', (e) => {
+    if (e.pointerId !== sid) { return; }
+    const dx = (e.clientX - cx) / 42;
+    const dy = (e.clientY - cy) / 42;
+    const m = Math.hypot(dx, dy);
+    const c = Math.min(1, m) / (m || 1);
+    touchVec.mx = dx * c;
+    touchVec.mz = dy * c;
+    knob.style.transform = `translate(${touchVec.mx * 30}px,${touchVec.mz * 30}px)`;
+  });
+  const end = (e) => {
+    if (e.pointerId !== sid) { return; }
+    sid = null;
+    touchVec.mx = 0; touchVec.mz = 0;
+    knob.style.transform = '';
+  };
+  stick.addEventListener('pointerup', end);
+  stick.addEventListener('pointercancel', end);
+  const tap = (id, fn) => {
+    $(id).addEventListener('pointerdown', (e) => { e.preventDefault(); sfx.unlock(); fn(); });
+  };
+  tap('t-act', () => queueCmd({ c: 'act' }));
+  tap('t-drop', () => queueCmd({ c: 'drop' }));
+  tap('t-q', () => queueCmd({ c: 'ability' }));
+  const tb = $('t-throw');
+  tb.addEventListener('pointerdown', (e) => {
+    e.preventDefault();
+    if (chargeT0 == null && throwable()) { chargeT0 = performance.now(); }
+  });
+  const tEnd = () => {
+    if (chargeT0 == null) { return; }
+    const p = chargePower();
+    chargeT0 = null;
+    if (p != null && throwable()) { queueCmd({ c: 'throw', p }); }
+  };
+  tb.addEventListener('pointerup', tEnd);
+  tb.addEventListener('pointercancel', tEnd);
 }
 
 // ── loops ──────────────────────────────────────────────────────────────────
@@ -341,6 +409,7 @@ window.__llState = () => game && {
 };
 
 buildMenu();
+setupTouch();
 if (params.get('host') === '1') { sfx.setMuted(true); hostCoop(); }
 else if (params.get('join')) { sfx.setMuted(true); joinCoop(params.get('join')); }
 else if (params.get('autostart') === '1' || autoMode) { sfx.setMuted(true); startSolo(); }

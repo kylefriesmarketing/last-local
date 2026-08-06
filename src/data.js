@@ -145,6 +145,7 @@ export const ITEMS = {
   fancywater:{ label: 'Glacier still', tint: 0xbfe3f0, fragile: true },
   garnish:   { label: 'Garnish',     tint: 0x6d8177 },
   feed:      { label: 'Pig feed',    tint: 0xc9a86a },
+  keg:       { label: 'Fresh keg',   tint: 0x8a6a3a, heavy: true },
   mopheld:   { label: 'Mop',         tint: 0x8a7a5a },
   shotgun:   { label: 'The Regulator', tint: 0x30343c, twoHands: true },
   phone:     { label: 'Dropped phone (evidence)', tint: 0x222831, evidence: true },
@@ -175,6 +176,9 @@ export const DIRECTOR_EVENTS = {
   tourbus:    { family: 'tourist',  weight: 1.0, cost: 30, cooldown: 999, maxPerShift: 1,
                 phases: ['compression', 'break'], telegraphs: ['air_brakes', 'headlights_many'],
                 recovery: 'Serve them before the bus leaves' },
+  kegdrop:    { family: 'failure',  weight: 0.8, cost: 12, cooldown: 999, maxPerShift: 1,
+                phases: ['warm', 'compression'], telegraphs: ['truck_rumble', 'crate_thud'],
+                recovery: 'Haul them in before you run dry' },
 };
 
 export const DIRECTOR = {
@@ -194,6 +198,8 @@ export const TUNING = {
   throwChargeSeconds: 0.85, throwGravity: 16, catchRadius: 0.75, bonkRadius: 0.55,
   busClockSeconds: 75, busUnservedHosp: -2, busTipBonus: 0.15,
   knockdownSeconds: 1.8,
+  kegPours: 10, kegSlow: 0.5, kegTapSeconds: 2.0,
+  botWaitMin: 0.35, botWaitMax: 1.25,
   patienceGraceAtDoor: 20,
   eatSeconds: 22, struggleEjectSeconds: 3.0,
   spillSlipChance: 0.35, shardStress: 8,

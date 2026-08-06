@@ -341,6 +341,80 @@ T('sprint slip is a real knockdown', () => {
   ok(g.players[0].stun > 1.0, 'knockdown stun applied (' + g.players[0].stun.toFixed(2) + ')');
 });
 
+console.log('== the keg loop ==');
+T('taps run dry, a hauled keg restores them', () => {
+  const g = new Game({ seed: 21 });
+  const p = g.players[0];
+  g.tapsKeg = 1;
+  p.x = 9.5; p.z = 9.5; // north of the taps
+  let ctx = g.contextOf(p);
+  ok(ctx && ctx.verb.includes('Pour'), 'taps pour while wet');
+  ctx.act();
+  for (let i = 0; i < 40; i++) { g.tick(); g.view.length = 0; }
+  eq(g.tapsKeg, 0, 'keg spent');
+  eq(p.carry && p.carry.kind, 'beer', 'beer in hand');
+  p.carry = null;
+  ctx = g.contextOf(p);
+  ok(ctx && ctx.verb.includes('DRY'), 'dry taps say so');
+  ok(!ctx.act, 'dry taps offer no pour');
+  p.carry = { kind: 'keg' };
+  ctx = g.contextOf(p);
+  ok(ctx && ctx.verb.includes('Tap the fresh keg'), 'keg unlocks the tap verb');
+  ctx.act();
+  for (let i = 0; i < 50; i++) { g.tick(); g.view.length = 0; }
+  eq(g.tapsKeg, 10, 'keg refilled the taps');
+  eq(p.carry, null, 'keg consumed');
+});
+T('kegs are heavy: slow to carry, impossible to throw, pig-proof', () => {
+  const g = new Game({ seed: 21 });
+  const p = g.players[0];
+  p.carry = { kind: 'keg' };
+  g.execCommand(0, { c: 'throw', p: 1 });
+  eq(p.carry && p.carry.kind, 'keg', 'keg refuses to fly');
+  g.gate = 'broken';
+  const kegs0 = g.items.filter((i) => i.kind === 'keg').length;
+  for (let i = 0; i < 20 * 40; i++) { g.tick(); g.view.length = 0; }
+  eq(g.items.filter((i) => i.kind === 'keg').length, kegs0, 'pigs cannot eat kegs');
+});
+T('the autopilot fetches a keg when the taps die', () => {
+  const g = new Game({ seed: 33 });
+  g.tapsKeg = 0;
+  ok(g.spawnParty('oldlocal'), 'seat a thirsty local');
+  const party = g.parties[0];
+  party.state = 'ordered';
+  const tbl = g.tables.find((t) => t.id === party.tableId);
+  g.orders.push({ id: 999, tableId: tbl.id, partyId: party.id, reqKey: 'beer', state: 'open', tLeft: 200, total: 200 });
+  let tapped = false;
+  for (let i = 0; i < 20 * 90 && !tapped; i++) {
+    autopilot(g);
+    g.tick();
+    for (const e of g.view) { if (e.kind === 'kegtapped') { tapped = true; } }
+    g.view.length = 0;
+  }
+  ok(tapped, 'pilot hauled and tapped a keg');
+});
+
+console.log('== the temp bot ==');
+T('a lone bot serves a full shift (no external driver)', () => {
+  const r = soak({ seed: 47, players: [{ employeeKey: 'cal', isBot: true }] });
+  eq(r.err, null, 'err: ' + r.err);
+  ok(r.over, 'shift concluded');
+  ok(r.ordersDone >= 5, 'bot resolved orders (' + r.ordersDone + ')');
+  ok(r.cash > 0, 'bot earned cash (' + r.cash + ')');
+});
+T('bot seats are deterministic', () => {
+  const players = [{ employeeKey: 'mara' }, { employeeKey: 'cal', isBot: true }];
+  const a = soak({ seed: 31, players, autopilot: true });
+  const b = soak({ seed: 31, players, autopilot: true });
+  eq(a.err, null, 'err: ' + a.err);
+  eq(a.fp, b.fp, 'bot runs diverged');
+});
+T('a bot seat stays lockstep-safe across the wire', () => {
+  const scripts = { 1: [{ t: 80, c: { c: 'in', mx: 0, mz: -1 } }, { t: 300, c: { c: 'in', mx: 0, mz: 0 } }] };
+  const r = netTest(Game, { seed: 55, ticks: 1200, players: 2, scripts, extraDefs: [{ employeeKey: 'cal', isBot: true }] });
+  ok(r.inSync === true, 'clients with a bot diverged: ' + JSON.stringify(r.final));
+});
+
 console.log('== the tour bus ==');
 T('tour bus seats three parties, the clock pays or punishes, then leaves', () => {
   const g = new Game({ seed: 13 });
