@@ -34,10 +34,11 @@ first join) · `?join=CODE` (auto-join).
 
 **FIRST PERSON** (the friendslop camera): click to lock the mouse and look
 around; a reticle marks your aim. **WASD** strafe/walk relative to where
-you look · **E** context verb · **Space (hold)** charge a throw — release
-to send it wherever you're facing · Shift hustle · **Q** ability · G drop ·
-**F** fire the Regulator · M mute. Getting knocked down drops your eyes to
-the floorboards. `?cam=iso` brings back the overhead diorama (QA/spectate).
+you look · **E** context verb · **C** shout (a context callout every
+teammate sees) · **Space (hold)** charge a throw · Shift hustle · **Q**
+ability · G drop · **F** fire the Regulator · M mute. Getting knocked down
+drops your eyes to the floorboards — and a teammate's **E** gets you back up
+in a fifth of the time. `?cam=iso` brings back the overhead diorama (QA).
 **🎙️ Proximity voice in co-op**: hit the mic button — friends sound louder
 up close, quieter across the room, panned to where they actually stand.
 **Phones work**: virtual stick + DO/THROW/Q/DROP buttons appear on touch
@@ -51,15 +52,33 @@ pours, delivers, collects, and hauls kegs.
 C:\Users\kylef\tools\node\node.exe tests/run.mjs
 ```
 
-29 tests: map reachability, rng/fingerprint determinism, track attribution
+66 tests: map reachability, rng/fingerprint determinism, track attribution
 ("no hidden scoring" — deltas without a cause THROW), full-shift soaks ×6
-seeds, director fairness (telegraphs precede effects; ≤2 pressure families;
-seed reproduces the decision log), the Regulator's costs, pigs eating
-evidence, substitution both succeeding and getting caught, and **lockstep
-co-op determinism** (2 and 4 in-memory clients, byte-identical fingerprints).
+seeds, director fairness (telegraphs precede effects; ≤2 **pressure** families
+— service modules don't pad the count; every module announces itself in two
+channels; the authored prep fault and one headline per pressure phase all
+fire), the Regulator's costs, pigs eating evidence, substitution both
+succeeding and getting caught, **the tray** (cap, loading, delivering the
+right item off it, hard vs soft dumps, sprinting as a measurable gamble),
+**the crew** (solid bodies, shoves that cost your coworker their hands, the
+callout reading the room, help-up), and **lockstep co-op determinism**
+(2/3/4 in-memory clients, byte-identical fingerprints, incl. runs scripted
+with pings, sprints and trays).
 
 ## What's in the shift (bible slice)
 
+- **The tray** (bible §9 "trays trade speed for fragility"): grab one at the
+  TRAYS station on the bar and carry **three** items a trip. Stations load onto
+  it. Delivering picks whatever that table wanted. Set it down and nothing
+  breaks; have it taken from you — sprint fumble, a spill, a coworker barging
+  past — and **everything** goes, glass into real shards, attributed on the
+  aftermath card. Walking never drops it; running often does.
+- **The crew is solid**: players collide (you can block the pass-through),
+  hustling into a coworker stumbles them and empties their hands, a downed
+  teammate can still **shout**, and your **E** picks them up.
+- **The callout** (C / SHOUT on touch): one button that reads the room — fire,
+  the gun being out, a loose pig, dry taps, a table that needs someone, a mess,
+  "need hands". It is sim state, so every client sees the same beacon.
 - **Service loop**: seat → take order → prep at taps/coffee/grill → deliver →
   collect. Request lattice per order: honest / **substitute** (deception roll
   vs archetype savvy — "rename it range oat") / refuse-eject / grovel-recover
@@ -75,7 +94,17 @@ co-op determinism** (2 and 4 in-memory clients, byte-identical fingerprints).
 - **Director** (§12): phase timeline (prep→warm→compression→break→last call),
   intensity budgets, ≤2 pressure families, every event telegraphed ~4s ahead
   in two channels (banner + audio cue), recovery valve after severe events,
-  staffing-aware arrivals, seeded + logged decisions.
+  staffing-aware arrivals, seeded + logged decisions. **Authored beats sit on
+  top of the budget** (§7): the prep fault always fires, and compression and the
+  break point are each guaranteed a headline. Arrivals are a *service* module —
+  cost 0, no pressure-family slot, never held back by the recovery valve, so
+  the room keeps filling while everything burns.
+- **Readable panic**: the screen edges redden and the mix lifts on one honest
+  danger score (parties complaining, orders under 25% patience, smoke, loose
+  pigs, the gun out, the bus clock, hospitality collapse). Phase turns get a
+  card and a sting. Every action gets camera kick, debris and floating text.
+- **An objective line** that says the single most worth-doing thing right now,
+  in the bible's §34 information order, and never invents a task.
 - **The throw verb**: hold Space, release to lob whatever you're holding —
   arc preview included. Teammates with free hands **catch** it (drink
   relays!). A match landing by a table is a **rough delivery** (served,
@@ -121,7 +150,7 @@ split absolute; every new sim feature lands with a battery test.
 
 ## QA handles (in-page)
 
-`__llState()` live snapshot · `__llGame` / `__llView` · `__llSoak(opts)`
+`__llState()` live snapshot · `__llGame` / `__llView` / `__llHud` · `__llSoak(opts)`
 headless shift · `__llPilot` the QA driver · fingerprints via
 `__llGame.fingerprint()`.
 
@@ -152,12 +181,23 @@ NOT wait for guest commits — a throttled guest's commands arrived late and
 were dropped (host monologue, not lockstep). If you ever "optimize" the
 wait-gate away, that bug comes back.
 
+## Difficulty, honestly
+
+The register goal is **$280**, tuned against the hesitating temp bot as a human
+proxy over 20 seeds (cash p10 $293 / p50 $358 / p90 $430; resolve p10 58%). The
+bot clears it 17/20, the omniscient autopilot 19/20. **This is proxy-tuned, not
+human-playtested** — a first-person human who has to find things will do worse,
+and a crew who actually uses the tray should do better. Re-measure after a real
+group plays. Both gates matter: cash AND a 60% resolve ratio.
+
 ## Next sessions
 
-1. Feel pass: carry two-hands/tray, throw arc preview, downed state, more
-   absurd requests (S02 wedding, S04 tour bus…). MP polish: waiting-on-net
-   indicator, host-lost card, rejoin.
-2. Art pass (Higgsfield textures/portraits — costs credits, confirm first).
-3. Balance battery: multi-seed autopilot matrix once a second employee AI
-   exists (current pilot is the omniscient baseline: wins ~$430-500).
-4. Deploy to GitHub Pages when Kyle wants a shareable link.
+1. **Playtest with real humans and re-tune** the register goal — everything
+   above is measured against bots.
+2. Two hand slots + pocket slots (bible §11); the tray is the two-handed case,
+   but small items should stack in pockets.
+3. Multi-item orders (a party of 3 wanting 3 things) — the tray exists now, so
+   this is the natural next pressure and it costs almost nothing to author.
+4. MP polish: waiting-on-net indicator, host-lost card, rejoin. Human-to-human
+   throw relays already work; two-person carries do not exist yet.
+5. Art pass (Higgsfield textures/portraits — costs credits, confirm first).

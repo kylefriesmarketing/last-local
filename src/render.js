@@ -1341,7 +1341,9 @@ export class View {
       map: this.labelTex(text, tint || '#8fca8f'), transparent: true,
       depthWrite: false, depthTest: false,
     }));
-    sp.position.set(x, y, z);
+    // jitter so two beats at the same table don't print on top of each other,
+    // and sit above the focus prompt rather than through it (captured)
+    sp.position.set(x + (Math.random() - 0.5) * 0.5, y + 0.45 + Math.random() * 0.25, z);
     sp.scale.set(1.2, 0.3, 1);
     this.scene.add(sp);
     this.floats.push({ sp, t: 0 });
