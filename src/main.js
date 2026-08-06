@@ -289,6 +289,7 @@ addEventListener('keydown', (e) => {
   else if (k === 'g') { queueCmd({ c: 'drop' }); }
   else if (k === 'f') { queueCmd({ c: 'fire' }); }
   else if (k === 'q') { queueCmd({ c: 'ability' }); }
+  else if (k === 'c') { queueCmd({ c: 'ping' }); }
   else if (k === 'm') { sfx.setMuted(!(window.__muted = !window.__muted)); }
 });
 addEventListener('keyup', (e) => {

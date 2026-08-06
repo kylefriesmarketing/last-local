@@ -638,6 +638,73 @@ T('a mid-run guest drop does not stall or desync the survivors', () => {
   ok(r.ticksRun[0] >= 1000 - INPUT_DELAY - 2, 'host stalled after drop (' + r.ticksRun[0] + ')');
 });
 
+console.log('== the crew (co-op physicality) ==');
+T('bodies are solid: two players cannot occupy the same spot', () => {
+  const g = new Game({ seed: 9, players: [{ employeeKey: 'mara' }, { employeeKey: 'cal' }] });
+  const [a, b] = g.players;
+  a.x = 12; a.z = 8; b.x = 12.02; b.z = 8.01;
+  g.tick();
+  ok(Math.hypot(a.x - b.x, a.z - b.z) >= TUNING.playerRadius * 2 - 0.02,
+    'players overlap (' + Math.hypot(a.x - b.x, a.z - b.z).toFixed(3) + ')');
+});
+T('hustling into a coworker knocks their drink out of their hands', () => {
+  const g = new Game({ seed: 9, players: [{ employeeKey: 'mara' }, { employeeKey: 'cal' }] });
+  const [a, b] = g.players;
+  a.x = 12; a.z = 8; b.x = 12.4; b.z = 8;
+  b.carry = { kind: 'beer' };
+  g.execCommand(0, { c: 'in', mx: 1, mz: 0, sp: true });
+  g.tick();
+  eq(b.carry, null, 'coworker kept hold of it');
+  ok(b.stun > 0, 'coworker should stumble');
+  ok(g.tracks.journal.some((j) => j.cause === 'evt.crewshove'), 'attributed to a cause');
+  ok(g.spills.some((s) => s.kind === 'shards'), 'the beer broke');
+});
+T('a downed coworker can be helped up, and can still shout', () => {
+  const g = new Game({ seed: 9, players: [{ employeeKey: 'mara' }, { employeeKey: 'cal' }] });
+  const [a, b] = g.players;
+  a.x = 12; a.z = 8; b.x = 12.9; b.z = 8;
+  b.stun = TUNING.knockdownSeconds;
+  // downed players are not muted
+  g.execCommand(1, { c: 'ping' });
+  eq(g.pings.length, 1, 'downed player pinged');
+  eq(g.pings[0].kind, 'help', 'a player on the floor shouts for help');
+  const hint = g.contextHint(a);
+  ok(hint && /Help/.test(hint.verb), 'help-up verb missing: ' + JSON.stringify(hint));
+  g.execCommand(0, { c: 'act' });
+  ok(b.stun <= TUNING.helpUpLeaves + 1e-6, 'still down after help (' + b.stun + ')');
+});
+T('the callout reads the room: fire, pigs, dry taps, money', () => {
+  const g = new Game({ seed: 9 });
+  const p = g.players[0];
+  const ping = () => { p.pingCd = 0; g.pings.length = 0; g.callOut(p); return g.pings[0].kind; };
+  p.x = STATIONS.fryer.x + 0.5; p.z = STATIONS.fryer.z - 1.5;
+  eq(ping(), 'here', 'quiet bar, quiet shout');
+  g.fryer.smoking = true;
+  eq(ping(), 'fire', 'smoke should outrank everything but a downed friend');
+  g.fryer.smoking = false;
+  g.pigs[0].loose = true; g.pigs[0].x = p.x + 1; g.pigs[0].z = p.z + 1;
+  eq(ping(), 'pig', 'a loose pig is a callout');
+  g.pigs[0].loose = false;
+  g.tapsKeg = 0;
+  eq(ping(), 'keg', 'dry taps are everyone\'s problem');
+});
+T('callouts expire and cost a cooldown', () => {
+  const g = new Game({ seed: 9 });
+  g.execCommand(0, { c: 'ping' });
+  g.execCommand(0, { c: 'ping' });
+  eq(g.pings.length, 1, 'ping spam should be rate limited');
+  for (let i = 0; i < TUNING.pingSeconds * TUNING.tickHz + 4; i++) { g.tick(); g.view.length = 0; }
+  eq(g.pings.length, 0, 'pings should expire');
+});
+T('pings and crew shoves stay lockstep-safe across the wire', () => {
+  const r = netTest(Game, { seed: 77, ticks: 900, players: 3, scripts: {
+    0: [{ t: 40, c: { c: 'in', mx: 1, mz: 0, sp: true } }, { t: 120, c: { c: 'ping' } }],
+    1: [{ t: 40, c: { c: 'in', mx: -1, mz: 0, sp: true } }, { t: 200, c: { c: 'ping' } }],
+    2: [{ t: 300, c: { c: 'ping' } }, { t: 320, c: { c: 'in', mz: 1 } }],
+  } });
+  ok(r.inSync === true, 'clients diverged: ' + JSON.stringify(r.final));
+});
+
 console.log('== win/loss shape ==');
 T('endShift stamps a result with journal + decisions', () => {
   const r = soak({ seed: 101, autopilot: true });

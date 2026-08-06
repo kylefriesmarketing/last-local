@@ -223,6 +223,11 @@ export const TUNING = {
   pigScoopRadius: 1.1, pigCarrySlow: 0.72, pigSquirmPerSec: 0.16, pigTossStun: 2.2,
   shoveRadius: 0.85, shoveForce: 1.4, shoveBackChance: 0.5, shoveStun: 1.2,
   fumbleChancePerSec: 0.5,
+  // bodies are solid: you can block a doorway, and hustling into a coworker
+  // costs THEM whatever was in their hands. This is the yelling-at-friends knob.
+  playerRadius: 0.31, crewShoveStun: 0.9, crewShoveForce: 1.1,
+  helpUpRadius: 1.35, helpUpLeaves: 0.2,
+  pingCooldown: 2.0, pingSeconds: 7.0, pingDangerRadius: 6.5,
   patienceGraceAtDoor: 20,
   eatSeconds: 22, struggleEjectSeconds: 3.0,
   spillSlipChance: 0.35, shardStress: 8,

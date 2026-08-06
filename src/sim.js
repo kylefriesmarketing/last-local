@@ -55,7 +55,7 @@ export class Game {
         pid: i, key: d.employeeKey, e, x: s.x + 0.5, z: s.z + 0.5,
         mx: 0, mz: 0, sprint: false, fx: 0, fz: 1, stamina: 1,
         carry: null, busy: null, stun: 0, abilityCd: 0, calBoost: 0,
-        isBot: !!d.isBot, botWait: 0, shoveCd: 0,
+        isBot: !!d.isBot, botWait: 0, shoveCd: 0, pingCd: 0,
         stats: { served: 0, prepped: 0, cleaned: 0, ejections: 0, shells: 0 },
       };
     });
@@ -66,6 +66,7 @@ export class Game {
     this.parties = [];
     this.guests = [];
     this.orders = [];
+    this.pings = [];    // crew callouts — shared sim state, so every client agrees
     this.items = [];
     this.spills = [];   // {x,z,kind:'spill'|'shards'}
     this.pigs = PIG_HOME.map((p, i) => ({
@@ -130,12 +131,51 @@ export class Game {
     const p = this.players[pid];
     if (!p || this.over) { return; }
     if (cmd.c === 'in') { this.setInput(pid, cmd.mx || 0, cmd.mz || 0, cmd.sp, cmd.fx, cmd.fz); return; }
+    // a downed coworker is not out of the game — they can still shout (bible §11)
+    if (cmd.c === 'ping') { this.callOut(p); return; }
     if (p.stun > 0) { return; }
     if (cmd.c === 'act') { this.doContext(p); }
     else if (cmd.c === 'drop') { this.dropCarry(p, true); }
     else if (cmd.c === 'fire') { this.fireShotgun(p); }
     else if (cmd.c === 'ability') { this.useAbility(p); }
     else if (cmd.c === 'throw') { this.throwItem(p, cmd.p); }
+  }
+
+  // ── the callout (bible §8 "Shout/ping — context callout") ────────────────
+  // One button, and the bar decides what you meant. It is sim state so every
+  // client agrees on the marker, which is what makes it a coordination tool
+  // rather than a local decoration. Consumes no rng: the read is pure.
+  callOut(p) {
+    if (p.pingCd > 0) { return; }
+    p.pingCd = TUNING.pingCooldown;
+    let kind = 'here';
+    let x = p.x; let z = p.z;
+    const R = TUNING.pingDangerRadius;
+    const near = (ax, az) => Math.hypot(ax - p.x, az - p.z) < R;
+    if (p.stun > 0) {
+      kind = 'help';
+    } else if (this.fryer.smoking && near(STATIONS.fryer.x + 0.5, STATIONS.fryer.z + 0.5)) {
+      kind = 'fire'; x = STATIONS.fryer.x + 0.5; z = STATIONS.fryer.z + 0.5;
+    } else if (!this.shotgun.stowed) {
+      kind = 'gun';
+    } else {
+      const pig = this.pigs.find((q) => q.loose && !q.carriedBy && near(q.x, q.z));
+      const mess = this.spills.find((s) => near(s.x + 0.5, s.z + 0.5));
+      const needy = this.parties.find((q) => (q.state === 'waitpay'
+        || (q.state === 'deciding' && q.decideT <= 0) || q.state === 'complaining')
+        && this.tblNear(q.tableId, p.x, p.z));
+      if (pig) { kind = 'pig'; x = pig.x; z = pig.z; }
+      else if (this.tapsKeg <= 0) { kind = 'keg'; x = STATIONS.taps.x + 0.5; z = STATIONS.taps.z + 0.5; }
+      else if (needy) {
+        const t = this.tables.find((q) => q.id === needy.tableId);
+        kind = needy.state === 'waitpay' ? 'money' : 'order';
+        if (t) { x = t.x + 0.5; z = t.z + 0.5; }
+      } else if (mess) { kind = 'mess'; x = mess.x + 0.5; z = mess.z + 0.5; }
+      else if (p.carry) { kind = 'hands'; }
+    }
+    this.pings.push({ id: this.nextId++, pid: p.pid, kind, x, z, tLeft: TUNING.pingSeconds });
+    if (this.pings.length > 8) { this.pings.shift(); }
+    this.ev('ping', { pid: p.pid, what: kind, x, z });
   }
 
   // ── the throw verb (bible §8: charge and release) ────────────────────────
@@ -274,6 +314,16 @@ export class Game {
   contextOf(p) {
     const px = p.x | 0; const pz = p.z | 0;
     const near = (x, z) => Math.abs(px - x) + Math.abs(pz - z) <= 1;
+    // a coworker on the floor outranks everything — you can be the reason they
+    // get up in half a second instead of lying there watching the shift burn
+    const down = this.players.find((q) => q.pid !== p.pid && q.stun > TUNING.helpUpLeaves + 0.3
+      && Math.hypot(q.x - p.x, q.z - p.z) < TUNING.helpUpRadius);
+    if (down) {
+      return { verb: 'Help ' + down.e.label.split(' ')[0] + ' up', act: () => {
+        down.stun = TUNING.helpUpLeaves;
+        this.ev('helpup', { pid: p.pid, who: down.pid, x: down.x, z: down.z });
+      } };
+    }
     // carried-item verbs first
     if (p.carry) {
       if (p.carry.kind === 'mopheld') {
@@ -1073,6 +1123,10 @@ export class Game {
     for (const p of this.players) {
       if (p.abilityCd > 0) { p.abilityCd -= dt; }
       if (p.calBoost > 0) { p.calBoost -= dt; }
+      // these tick even when downed/busy: you can always shout, and a shove
+      // cooldown that froze while stunned let a knocked-down player chain shoves
+      if (p.pingCd > 0) { p.pingCd -= dt; }
+      if (p.shoveCd > 0 && (p.stun > 0 || p.busy)) { p.shoveCd -= dt; }
       if (p.stun > 0) { p.stun -= dt; continue; }
       if (p.isBot) { this.botTick(p, dt); }
       if (p.busy) {
@@ -1100,7 +1154,27 @@ export class Game {
         const nz = p.z + (p.mz / m) * speed * dt;
         if (!this.blockedAt(nx + Math.sign(p.mx) * 0.25, p.z)) { p.x = nx; }
         if (!this.blockedAt(p.x, nz + Math.sign(p.mz) * 0.25)) { p.z = nz; }
-        // player slips
+        // hustling into a COWORKER is the loudest thing in the building: they
+        // stumble, and whatever they were carrying hits the floor. Checked before
+        // guests on purpose — the friend collision is the one you want to feel.
+        if (p.sprint && p.shoveCd <= 0) {
+          for (const q of this.players) {
+            if (q.pid === p.pid || q.stun > 0) { continue; }
+            if (Math.hypot(q.x - p.x, q.z - p.z) > TUNING.shoveRadius) { continue; }
+            const im = Math.hypot(p.mx, p.mz) || 1;
+            const qx = q.x + (p.mx / im) * TUNING.crewShoveForce;
+            const qz = q.z + (p.mz / im) * TUNING.crewShoveForce;
+            if (!this.blockedAt(qx, qz)) { q.x = qx; q.z = qz; }
+            q.stun = Math.max(q.stun, TUNING.crewShoveStun);
+            if (q.busy) { q.busy = null; }
+            p.shoveCd = 1.2;
+            const lost = q.carry && q.carry.kind !== 'shotgun' && q.carry.kind !== 'mopheld';
+            if (lost) { this.dropCarry(q, false); }
+            this.track('chaos', 1, 'evt.crewshove', 'the crew ran into each other');
+            this.ev('crewshove', { pid: p.pid, who: q.pid, x: q.x, z: q.z, dropped: !!lost });
+            break;
+          }
+        }
         // hustling through a crowd moves people (and rowdy rooms shove back)
         if (p.sprint && p.shoveCd <= 0) {
           for (const g of this.guests) {
@@ -1141,6 +1215,26 @@ export class Game {
           if (p.carry && p.carry.kind !== 'shotgun' && p.carry.kind !== 'mopheld') { this.dropCarry(p, false); }
         }
       }
+    }
+
+    // bodies are solid. Deterministic pairwise separation (array order, no rng)
+    // so a coworker can genuinely block the pass-through behind the bar.
+    const rr = TUNING.playerRadius * 2;
+    for (let i = 0; i < this.players.length; i++) {
+      for (let j = i + 1; j < this.players.length; j++) {
+        const a = this.players[i]; const b = this.players[j];
+        const dx = b.x - a.x; const dz = b.z - a.z;
+        const d = Math.hypot(dx, dz);
+        if (d >= rr) { continue; }
+        const ux = d > 1e-4 ? dx / d : 1; const uz = d > 1e-4 ? dz / d : 0;
+        const push = ((rr - d) * 0.5) + 1e-4;
+        if (!this.blockedAt(b.x + ux * push, b.z + uz * push)) { b.x += ux * push; b.z += uz * push; }
+        if (!this.blockedAt(a.x - ux * push, a.z - uz * push)) { a.x -= ux * push; a.z -= uz * push; }
+      }
+    }
+    for (let i = this.pings.length - 1; i >= 0; i--) {
+      this.pings[i].tLeft -= dt;
+      if (this.pings[i].tLeft <= 0) { this.pings.splice(i, 1); }
     }
 
     this.flightTick(dt);
@@ -1327,6 +1421,7 @@ export class Game {
     for (const pig of this.pigs) { mix(pig.x); mix(pig.z); }
     mix(this.tracks.cash); mix(this.tracks.heat); mix(this.tracks.hospitality);
     mix(this.orders.length); mix(this.items.length); mix(this.spills.length);
+    mix(this.pings.length);
     mix(this.rngState);
     return h.toString(16) + '|' + (this.time | 0) + '|' + this.tracks.journal.length;
   }
