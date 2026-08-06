@@ -66,6 +66,8 @@ const EVENT_TOASTS = {
   shove:       { text: '💢 You barged straight through somebody.', cls: '' },
   shovedback:  { text: '💢 The party shoved back. You are on the floor.', cls: 'warn' },
   fumble:      { text: '🫳 Fumbled it at speed.', cls: 'warn' },
+  traygrab:    { text: '🍽️ Tray in hand. Three at a time — if you can keep them on it.', cls: 'good' },
+  traydump:    { text: '🍽️ THE WHOLE TRAY. Every last one.', cls: 'warn' },
 };
 
 export class Hud {
@@ -205,7 +207,19 @@ export class Hud {
 
     // carry + ability chips
     let chips = '';
-    if (player.carry) { chips += `<span class="chip">CARRY <b>${player.carry.kind}</b> <i style="opacity:.6">(Space: throw)</i></span>`; }
+    if (player.carry && player.carry.kind === 'tray') {
+      const load = player.carry.items;
+      const slots = [];
+      for (let i = 0; i < TUNING.trayCap; i++) {
+        slots.push(load[i]
+          ? `<b>${load[i]}</b>`
+          : '<i style="opacity:.35">empty</i>');
+      }
+      chips += `<span class="chip" style="border-color:var(--cream)">🍽️ TRAY ${slots.join(' · ')}`
+        + (load.length ? ' <i style="opacity:.6">(Shift = gamble)</i>' : '') + '</span>';
+    } else if (player.carry) {
+      chips += `<span class="chip">CARRY <b>${player.carry.kind}</b> <i style="opacity:.6">(Space: throw)</i></span>`;
+    }
     const cd = player.abilityCd > 0 ? ' (' + Math.ceil(player.abilityCd) + 's)' : '';
     chips += `<span class="chip"><b>Q</b> ${player.e.abilityLabel}${cd}</span>`;
     if (!game.shotgun.stowed) { chips += `<span class="chip" style="border-color:var(--rust)">🔫 shells <b>${game.shotgun.shells}</b></span>`; }

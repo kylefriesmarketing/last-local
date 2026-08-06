@@ -23,6 +23,14 @@ function canvasTex(draw, w = 128, h = 128) {
   return t;
 }
 
+/** Carry identity for the view: a plain kind, or "tray:beer,coffee" so the
+ *  cached viewmodel rebuilds the moment the load on the tray changes. */
+function carryKey(carry) {
+  if (!carry) { return null; }
+  if (carry.kind !== 'tray') { return carry.kind; }
+  return 'tray:' + (carry.items || []).join(',');
+}
+
 export class View {
   constructor(canvas) {
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
@@ -743,11 +751,42 @@ export class View {
     vm.add(this.vmHolder);
   }
 
+  /** Build a tray with its actual load on it — this is the object the whole
+   *  service loop now revolves around, so you have to be able to glance down
+   *  and know what you are carrying without reading the HUD. */
+  makeTray(items) {
+    const g = new THREE.Group();
+    const board = new THREE.Mesh(new THREE.CylinderGeometry(0.34, 0.31, 0.035, 20),
+      new THREE.MeshStandardMaterial({ color: 0xb08c5a, roughness: 0.6 }));
+    g.add(board);
+    const lip = new THREE.Mesh(new THREE.TorusGeometry(0.335, 0.022, 6, 22),
+      new THREE.MeshStandardMaterial({ color: 0x8a6a3a, roughness: 0.7 }));
+    lip.rotation.x = Math.PI / 2;
+    lip.position.y = 0.02;
+    g.add(lip);
+    (items || []).forEach((kind, i) => {
+      const it = this.makeItem(kind);
+      // offset the ring so no glass hides directly behind another one
+      const a = ((i / 3) * Math.PI * 2) + 0.62;
+      it.position.set(Math.cos(a) * 0.19, 0.14, Math.sin(a) * 0.19);
+      it.scale.setScalar(0.85);
+      g.add(it);
+    });
+    return g;
+  }
+
   syncViewModel(kind) {
     if (this.vmKind === kind || !this.viewModel) { return; }
     this.vmKind = kind;
     while (this.vmHolder.children.length) { this.vmHolder.remove(this.vmHolder.children[0]); }
     if (!kind) { return; }
+    if (kind.slice(0, 5) === 'tray:') {
+      const t = this.makeTray(kind.slice(5) ? kind.slice(5).split(',') : []);
+      t.position.set(-0.3, 0.02, -0.12);
+      t.rotation.z = 0.08;
+      this.vmHolder.add(t);
+      return;
+    }
     const m = this.makeItem(kind === 'mopheld' ? 'garnish' : kind);
     if (kind === 'mopheld') {
       m.geometry = new THREE.CylinderGeometry(0.03, 0.03, 1.2, 6);
@@ -962,7 +1001,7 @@ export class View {
         m.userData.tag.visible = d > 1.5;
       }
       // carried item as a small mesh in front
-      this.syncCarry(m, p.carry ? p.carry.kind : null);
+      this.syncCarry(m, carryKey(p.carry));
     }
     // guests
     const liveGuests = new Set();
@@ -1182,7 +1221,7 @@ export class View {
         roll + Math.sin(t * 39) * sk * 1.2);
       this.camera.fov = 74;
       this.camera.updateProjectionMatrix();
-      this.syncViewModel(p0.carry ? p0.carry.kind : null);
+      this.syncViewModel(carryKey(p0.carry));
       if (this.viewModel) {
         this.viewModel.position.x = 0.34 + (moving ? Math.sin(t * 4.7) * 0.014 : 0);
         this.viewModel.position.y = -0.42 + (moving ? Math.abs(Math.sin(t * 9.4)) * 0.02 : 0);
@@ -1212,6 +1251,13 @@ export class View {
     }
     personMesh.userData.carryKind = kind;
     if (!kind) { return; }
+    if (kind.slice(0, 5) === 'tray:') {
+      const t = this.makeTray(kind.slice(5) ? kind.slice(5).split(',') : []);
+      t.position.set(0, 0.92, 0.34);
+      personMesh.add(t);
+      personMesh.userData.carryMesh = t;
+      return;
+    }
     const m = this.makeItem(kind === 'mopheld' ? 'garnish' : kind);
     if (kind === 'mopheld') {
       m.geometry = new THREE.CylinderGeometry(0.03, 0.03, 1.1, 6);
@@ -1384,6 +1430,13 @@ export class View {
       this.shake(0.5, PEN_GATE.x, PEN_GATE.z);
       this.burst(PEN_GATE.x + 0.5, 0.6, PEN_GATE.z + 0.5,
         { count: 8, color: 0x6b4a2e, speed: 2.6, life: 1 });
+    } else if (k === 'traydump') {
+      this.shake(e.hard ? 0.66 : 0.2, e.x, e.z);
+      this.burst(e.x, 0.95, e.z, {
+        count: 6 + e.count * 4, color: e.broke ? 0xd8e8f0 : 0xb08c5a,
+        speed: e.hard ? 3.2 : 1.4, life: 1.1,
+      });
+      if (e.hard) { this.float('EVERYTHING', e.x, 1.5, e.z, '#e0917a'); }
     } else if (k === 'helpup') {
       this.float('UP YOU GET', e.x, 1.4, e.z, '#8fca8f');
     } else if (k === 'phase') {

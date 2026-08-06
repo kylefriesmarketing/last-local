@@ -638,6 +638,110 @@ T('a mid-run guest drop does not stall or desync the survivors', () => {
   ok(r.ticksRun[0] >= 1000 - INPUT_DELAY - 2, 'host stalled after drop (' + r.ticksRun[0] + ')');
 });
 
+console.log('== the tray ==');
+function withTray(seed = 12) {
+  const g = new Game({ seed });
+  const p = g.players[0];
+  p.carry = { kind: 'tray', items: [] };
+  return { g, p };
+}
+T('a tray holds three, then refuses a fourth', () => {
+  const { g, p } = withTray();
+  ok(g.canTake(p), 'empty tray takes');
+  for (let i = 0; i < TUNING.trayCap; i++) { g.give(p, 'beer'); }
+  eq(p.carry.items.length, TUNING.trayCap, 'filled to cap');
+  ok(!g.canTake(p), 'a full tray must refuse');
+});
+T('loading a tray at a station costs the same as pouring into your hand', () => {
+  const g = new Game({ seed: 12 });
+  const p = g.players[0];
+  p.x = STATIONS.taps.x + 0.5; p.z = STATIONS.taps.z - 0.5;
+  g.execCommand(0, { c: 'act' });                       // pour into the hand
+  for (let i = 0; i < 60; i++) { g.tick(); g.view.length = 0; }
+  eq(p.carry.kind, 'beer', 'hand pour');
+  p.carry = { kind: 'tray', items: [] };
+  const hint = g.contextHint(p);
+  ok(hint && /tray/i.test(hint.verb), 'tray verb missing: ' + JSON.stringify(hint));
+  g.execCommand(0, { c: 'act' });
+  for (let i = 0; i < 60; i++) { g.tick(); g.view.length = 0; }
+  eq(p.carry.items.length, 1, 'poured onto the tray');
+  eq(p.carry.items[0], 'beer', 'and it is a beer');
+});
+T('a tray delivers the item the table actually wanted', () => {
+  const g = new Game({ seed: 12 });
+  g.time = 200;
+  ok(g.spawnParty('tourist'), 'seated');
+  const party = g.parties[0];
+  const tbl = g.tables.find((t) => t.partyId === party.id);
+  party.state = 'deciding'; party.decideT = -1;
+  const p = g.players[0];
+  p.x = tbl.x + 0.5; p.z = tbl.z + 1.5;
+  g.takeOrder(p, tbl, party);
+  const ord = g.orders.find((o) => o.tableId === tbl.id && o.state === 'open');
+  const want = REQUESTS[ord.reqKey].needItem;
+  p.carry = { kind: 'tray', items: ['garnish', want, 'fries'] };
+  g.deliver(p, tbl, ord);
+  eq(ord.state, 'done', 'order should resolve off the tray');
+  eq(p.carry.items.length, 2, 'exactly one thing left the tray');
+  ok(!p.carry.items.includes(want), 'and it was the right one');
+});
+T('a tray taken from you breaks; a tray set down does not', () => {
+  const a = withTray(4);
+  a.p.carry.items.push('beer', 'coffee');
+  a.g.dumpTray(a.p, true);
+  ok(a.g.spills.filter((s) => s.kind === 'shards').length >= 1, 'hard dump breaks glass');
+  ok(a.g.tracks.journal.some((j) => j.cause === 'evt.tray.dumped'), 'attributed');
+  const b = withTray(4);
+  b.p.carry.items.push('beer', 'burger');
+  b.g.dumpTray(b.p, false);
+  eq(b.g.spills.length, 0, 'a careful unload breaks nothing');
+  eq(b.g.items.filter((i) => i.kind === 'beer' || i.kind === 'burger').length, 2, 'both on the floor');
+});
+T('sprinting with a loaded tray is a real gamble, walking is not', () => {
+  const run = (sprint) => {
+    let dumps = 0;
+    for (let seed = 1; seed <= 24; seed++) {
+      const g = new Game({ seed });
+      const p = g.players[0];
+      p.carry = { kind: 'tray', items: ['beer', 'coffee', 'beer'] };
+      p.x = 12; p.z = 12;
+      g.execCommand(0, { c: 'in', mx: 1, mz: 0, sp: sprint });
+      for (let i = 0; i < 20 && p.carry && p.carry.items.length === 3; i++) { g.tick(); g.view.length = 0; }
+      if (!p.carry.items.length) { dumps++; }
+    }
+    return dumps;
+  };
+  const hustled = run(true);
+  const walked = run(false);
+  ok(hustled > 0, 'a full-tilt tray should sometimes go (' + hustled + '/24)');
+  eq(walked, 0, 'walking must never drop it (' + walked + '/24)');
+});
+T('a coworker barging into you takes the whole tray with them', () => {
+  const g = new Game({ seed: 9, players: [{ employeeKey: 'mara' }, { employeeKey: 'cal' }] });
+  const [a, b] = g.players;
+  a.x = 12; a.z = 8; b.x = 12.4; b.z = 8;
+  b.carry = { kind: 'tray', items: ['beer', 'coffee'] };
+  g.execCommand(0, { c: 'in', mx: 1, mz: 0, sp: true });
+  g.tick();
+  eq(b.carry, null, 'the tray should be gone');
+  ok(g.spills.some((s) => s.kind === 'shards'), 'and it should have broken');
+});
+T('the temp bot never deadlocks holding a tray', () => {
+  const g = new Game({ seed: 3, players: [{ employeeKey: 'cal', isBot: true }] });
+  const p = g.players[0];
+  p.carry = { kind: 'tray', items: ['beer'] };
+  for (let i = 0; i < 120; i++) { g.tick(); g.view.length = 0; }
+  ok(!p.carry || p.carry.kind !== 'tray', 'bot should put the tray down');
+});
+T('trays stay lockstep-safe across the wire', () => {
+  const r = netTest(Game, { seed: 21, ticks: 900, players: 2, scripts: {
+    0: [{ t: 30, c: { c: 'in', mx: 0, mz: -1, sp: true } }, { t: 90, c: { c: 'act' } },
+      { t: 200, c: { c: 'drop' } }],
+    1: [{ t: 60, c: { c: 'in', mx: 1, mz: -1, sp: true } }, { t: 140, c: { c: 'act' } }],
+  } });
+  ok(r.inSync === true, 'clients diverged: ' + JSON.stringify(r.final));
+});
+
 console.log('== the crew (co-op physicality) ==');
 T('bodies are solid: two players cannot occupy the same spot', () => {
   const g = new Game({ seed: 9, players: [{ employeeKey: 'mara' }, { employeeKey: 'cal' }] });

@@ -182,6 +182,7 @@ export class Game {
   throwItem(p, power01) {
     if (!p.carry || p.busy) { return; }
     if (p.carry.kind === 'shotgun' || p.carry.kind === 'mopheld') { return; }
+    if (p.carry.kind === 'tray') { this.ev('tooheavy'); return; }
     if (p.carry.kind === 'pig') { this.tossPig(p, Math.max(0, Math.min(1, power01 || 0))); return; }
     if (ITEMS[p.carry.kind] && ITEMS[p.carry.kind].heavy) { this.ev('tooheavy'); return; }
     const kind = p.carry.kind;
@@ -355,8 +356,10 @@ export class Game {
         const ord = this.orders.find((o) => o.tableId === tbl.id && o.state === 'open');
         if (ord) {
           const req = REQUESTS[ord.reqKey];
-          const right = p.carry.kind === req.needItem;
-          const fake = !right && req.substitute && p.carry.kind === req.substitute.item;
+          const holding = (k) => (this.onTray(p) ? this.trayHas(p, k) : p.carry.kind === k);
+          const right = holding(req.needItem);
+          const fake = !right && req.substitute && holding(req.substitute.item);
+          if (this.onTray(p) && !right && !fake && !p.carry.items.length) { return null; }
           return { verb: right ? 'Serve table ' + tbl.id
             : fake ? 'Pass it off as the real thing (T' + tbl.id + ')'
               : 'Serve table ' + tbl.id + ' — they wanted ' + REQUESTS[ord.reqKey].label,
@@ -386,6 +389,11 @@ export class Game {
     for (const key of Object.keys(STATIONS)) {
       const s = STATIONS[key];
       if (!near(s.x, s.z)) { continue; }
+      // "nothing happens when I press E" is the worst possible answer: say why
+      if (s.makes && this.onTray(p) && p.carry.items.length >= TUNING.trayCap) {
+        return { verb: 'Tray is full — go serve somebody', tag: 'wrong',
+          at: at(s.x + 0.5, s.z + 0.5, 1.35) };
+      }
       const a = this.stationAction(p, key, s);
       if (a) {
         a.at = a.at || at(s.x + 0.5, s.z + 0.5, key === 'trough' || key === 'dumpster' ? 0.7 : 1.35);
@@ -440,7 +448,64 @@ export class Game {
     }
   }
 
+  // ── the tray ─────────────────────────────────────────────────────────────
+  /** Everything on the tray hits the floor. `hard` = it was taken from you
+   *  (sprint fumble, shove, slip) rather than set down, so glass breaks. */
+  dumpTray(p, hard) {
+    if (!p.carry || p.carry.kind !== 'tray' || !p.carry.items.length) { return 0; }
+    const load = p.carry.items.slice();
+    p.carry.items.length = 0;
+    let broke = 0;
+    for (let i = 0; i < load.length; i++) {
+      // deterministic fan-out: no rng, so a dump is identical on every client
+      const a = (i / load.length) * Math.PI * 2;
+      const x = p.x + Math.cos(a) * TUNING.trayDumpSpread;
+      const z = p.z + Math.sin(a) * TUNING.trayDumpSpread;
+      if (hard && ITEMS[load[i]] && ITEMS[load[i]].fragile) {
+        this.addSpill(x | 0, z | 0, 'shards');
+        broke++;
+      } else if (!this.blockedAt(x, z)) {
+        this.items.push({ id: this.nextId++, kind: load[i], x, z });
+      } else {
+        this.items.push({ id: this.nextId++, kind: load[i], x: p.x, z: p.z });
+      }
+    }
+    if (broke) { this.ev('glassbreak', { x: p.x, z: p.z }); }
+    this.track('chaos', hard ? load.length : 1, 'evt.tray.dumped',
+      hard ? 'a whole tray went down' : 'a tray was set down badly');
+    this.ev('traydump', { pid: p.pid, count: load.length, broke, x: p.x, z: p.z, hard: !!hard });
+    return load.length;
+  }
+
+  trayHas(p, kind) {
+    return !!(p.carry && p.carry.kind === 'tray' && p.carry.items.includes(kind));
+  }
+
+  /** Spend one held thing — off the tray if that's where it lives. */
+  consume(p, kind) {
+    if (!p.carry) { return; }
+    if (p.carry.kind !== 'tray') { p.carry = null; return; }
+    const i = p.carry.items.indexOf(kind);
+    if (i >= 0) { p.carry.items.splice(i, 1); }
+    else if (p.carry.items.length) { p.carry.items.shift(); }
+  }
+
   stationAction(p, key, s) {
+    if (key === 'tray') {
+      if (!p.carry) {
+        return { verb: s.verb, at: { x: s.x + 0.5, z: s.z + 0.5, y: 1.35 },
+          act: () => this.startBusy(p, 'Grabbing a tray', s.time, () => {
+            p.carry = { kind: 'tray', items: [] };
+            this.ev('traygrab', { pid: p.pid });
+          }) };
+      }
+      if (p.carry.kind === 'tray') {
+        return { verb: p.carry.items.length ? 'Unload + stow the tray' : 'Stow the tray',
+          at: { x: s.x + 0.5, z: s.z + 0.5, y: 1.35 },
+          act: () => { this.dumpTray(p, false); p.carry = null; } };
+      }
+      return null;
+    }
     if (key === 'taps') {
       if (this.tapsKeg <= 0) {
         if (p.carry && p.carry.kind === 'keg') {
@@ -452,14 +517,16 @@ export class Game {
         }
         return { verb: 'Taps are DRY — bring a keg from the lot' };
       }
-      if (!p.carry) {
-        return { verb: s.verb, act: () => this.startBusy(p, s.label, s.time * p.e.prepMul, () => {
-          p.carry = { kind: 'beer' };
-          p.stats.prepped++;
-          this.tapsKeg--;
-          if (this.tapsKeg === 2) { this.ev('keglow'); }
-          if (this.tapsKeg === 0) { this.ev('kegdry'); }
-        }) };
+      const pour = () => {
+        this.give(p, 'beer');
+        p.stats.prepped++;
+        this.tapsKeg--;
+        if (this.tapsKeg === 2) { this.ev('keglow'); }
+        if (this.tapsKeg === 0) { this.ev('kegdry'); }
+      };
+      if (this.canTake(p)) {
+        return { verb: this.onTray(p) ? 'Pour a beer onto the tray' : s.verb,
+          act: () => this.startBusy(p, s.label, s.time * p.e.prepMul, pour) };
       }
       return null;
     }
@@ -481,12 +548,27 @@ export class Game {
     if (key === 'mop') { if (!p.carry) { return { verb: s.verb, act: () => this.startBusy(p, 'Grabbing mop', s.time, () => { p.carry = { kind: 'mopheld' }; }) }; } return null; }
     if (key === 'trough') { if (!p.carry) { return { verb: s.verb, act: () => this.startBusy(p, 'Scooping feed', s.time, () => { p.carry = { kind: 'feed' }; }) }; } return null; }
     if (key === 'dumpster' || key === 'pos' || key === 'jukebox') { return null; }
-    if (s.makes && !p.carry) {
-      return { verb: s.verb, act: () => this.startBusy(p, s.label, s.time * p.e.prepMul, () => {
-        p.carry = { kind: s.makes }; p.stats.prepped++;
-      }) };
+    if (s.makes && this.canTake(p)) {
+      return { verb: this.onTray(p) ? s.verb + ' → tray' : s.verb,
+        act: () => this.startBusy(p, s.label, s.time * p.e.prepMul, () => {
+          this.give(p, s.makes); p.stats.prepped++;
+        }) };
     }
     return null;
+  }
+
+  /** Hands free, or a tray with room on it. */
+  canTake(p) {
+    if (!p.carry) { return true; }
+    return p.carry.kind === 'tray' && p.carry.items.length < TUNING.trayCap;
+  }
+
+  onTray(p) { return !!(p.carry && p.carry.kind === 'tray'); }
+
+  /** Put a freshly made thing wherever it goes: the tray, or your hand. */
+  give(p, kind) {
+    if (this.onTray(p)) { p.carry.items.push(kind); this.ev('trayload', { pid: p.pid, item: kind }); }
+    else { p.carry = { kind }; }
   }
 
   doContext(p) {
@@ -504,6 +586,12 @@ export class Game {
     if (!p.carry) { return; }
     const kind = p.carry.kind;
     if (kind === 'pig') { this.releasePig(p, true); return; }
+    if (kind === 'tray') {
+      // taken from you = everything breaks; set down = everything survives
+      this.dumpTray(p, !deliberate);
+      p.carry = null;
+      return;
+    }
     p.carry = null;
     if (kind === 'shotgun') { this.items.push({ id: this.nextId++, kind, x: p.x, z: p.z }); this.ev('gundrop'); return; }
     if (kind === 'mopheld') { return; }
@@ -517,8 +605,9 @@ export class Game {
   }
 
   tossDumpster(p) {
-    const kind = p.carry.kind;
-    p.carry = null;
+    const kind = this.onTray(p) ? p.carry.items[0] : p.carry.kind;
+    if (kind == null) { return; }
+    this.consume(p, kind);
     if (ITEMS[kind] && ITEMS[kind].evidence) {
       this.track('heat', -5, 'evt.evidence.tossed', 'evidence in the dumpster');
       this.ev('evidencegone', { how: 'dumpster' });
@@ -547,29 +636,35 @@ export class Game {
     const req = REQUESTS[ord.reqKey];
     const party = this.parties.find((q) => q.id === ord.partyId);
     if (!party) { return; }
-    const kind = p.carry.kind;
+    // a tray delivers whichever thing on it the table actually wanted
+    const kind = this.onTray(p)
+      ? (this.trayHas(p, req.needItem) ? req.needItem
+        : (req.substitute && this.trayHas(p, req.substitute.item) ? req.substitute.item
+          : p.carry.items[0]))
+      : p.carry.kind;
+    if (kind == null) { this.ev('wrongitem', { tableId: tbl.id, want: req.needItem }); return; }
     if (req.needItem && kind === req.needItem) {
-      this.resolveOrder(p, ord, party, 'honest');
+      this.resolveOrder(p, ord, party, 'honest', kind);
     } else if (req.substitute && kind === req.substitute.item) {
       const arche = ARCHETYPES[party.arche];
       if (this.rng() < req.substitute.risk * arche.savvy) {
-        p.carry = null;
+        this.consume(p, kind);
         this.track('hospitality', TUNING.substituteCaughtHosp, 'evt.sub.caught', req.substitute.cover + ' — caught');
         this.track('heat', this.inspector.present ? TUNING.substituteCaughtHeat : 0, 'evt.sub.caught', 'inspector noted it');
         party.mood -= 2;
         this.ev('subcaught', { tableId: tbl.id });
         ord.tLeft = Math.min(ord.tLeft, 12);
       } else {
-        this.resolveOrder(p, ord, party, 'deception');
+        this.resolveOrder(p, ord, party, 'deception', kind);
       }
     } else {
       this.ev('wrongitem', { tableId: tbl.id, want: req.needItem });
     }
   }
 
-  resolveOrder(p, ord, party, path) {
+  resolveOrder(p, ord, party, path, used) {
     const req = REQUESTS[ord.reqKey];
-    p.carry = null;
+    this.consume(p, used);
     ord.state = 'done'; ord.path = path;
     party.state = 'eating'; party.eatT = TUNING.eatSeconds;
     party.satisfied = ord.tLeft / ord.total;
@@ -1171,7 +1266,9 @@ export class Game {
         speed *= p.carry.kind === 'shotgun' ? TUNING.shotgunSlow
           : p.carry.kind === 'keg' ? (p.calBoost > 0 ? 0.82 : TUNING.kegSlow)
             : p.carry.kind === 'pig' ? TUNING.pigCarrySlow
-              : (p.calBoost > 0 ? 1 : TUNING.carrySlow);
+              : p.carry.kind === 'tray'
+                ? (TUNING.traySlow - (p.carry.items.length * TUNING.trayLoadSlow))
+                : (p.calBoost > 0 ? 1 : TUNING.carrySlow);
       }
       if (p.shoveCd > 0) { p.shoveCd -= dt; }
       if (p.sprint && p.stamina > 0.05) {
@@ -1200,7 +1297,8 @@ export class Game {
             q.stun = Math.max(q.stun, TUNING.crewShoveStun);
             if (q.busy) { q.busy = null; }
             p.shoveCd = 1.2;
-            const lost = q.carry && q.carry.kind !== 'shotgun' && q.carry.kind !== 'mopheld';
+            const lost = q.carry && q.carry.kind !== 'shotgun' && q.carry.kind !== 'mopheld'
+              && !(q.carry.kind === 'tray' && !q.carry.items.length);
             if (lost) { this.dropCarry(q, false); }
             this.track('chaos', 1, 'evt.crewshove', 'the crew ran into each other');
             this.ev('crewshove', { pid: p.pid, who: q.pid, x: q.x, z: q.z, dropped: !!lost });
@@ -1235,7 +1333,11 @@ export class Game {
         }
         const s = this.spills.find((sp) => sp.kind === 'spill' && sp.x === (p.x | 0) && sp.z === (p.z | 0));
         // sprinting with something breakable is its own gamble
-        if (p.sprint && p.carry && ITEMS[p.carry.kind] && ITEMS[p.carry.kind].fragile
+        if (p.sprint && p.carry && p.carry.kind === 'tray' && p.carry.items.length
+          && this.rng() < TUNING.trayFumblePerSec * dt * p.carry.items.length) {
+          this.ev('fumble', { pid: p.pid, item: 'tray' });
+          this.dumpTray(p, true);
+        } else if (p.sprint && p.carry && ITEMS[p.carry.kind] && ITEMS[p.carry.kind].fragile
           && this.rng() < TUNING.fumbleChancePerSec * dt) {
           this.ev('fumble', { pid: p.pid, item: p.carry.kind });
           this.dropCarry(p, false);
@@ -1245,6 +1347,7 @@ export class Game {
           p.stun = p.sprint ? TUNING.knockdownSeconds : 0.8;
           this.ev('slip', { x: p.x, z: p.z, who: 'player', pid: p.pid, hard: p.sprint });
           if (p.carry && p.carry.kind !== 'shotgun' && p.carry.kind !== 'mopheld') { this.dropCarry(p, false); }
+
         }
       }
     }
@@ -1376,6 +1479,7 @@ export class Game {
   serviceCandidates(p) {
     const out = [];
     const openOrders = this.orders.filter((o) => o.state === 'open');
+    if (p.carry && p.carry.kind === 'tray') { return [{ drop: true }]; }
     if (p.carry && p.carry.kind !== 'mopheld' && p.carry.kind !== 'feed'
       && p.carry.kind !== 'shotgun' && p.carry.kind !== 'keg') {
       const match = openOrders.find((o) => {

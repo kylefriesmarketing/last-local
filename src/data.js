@@ -55,6 +55,7 @@ export const STATIONS = {
   mop:     { x: 16, z: 14, label: 'Mop closet',  verb: 'Grab mop',     time: 0.6 },
   jelly:   { x: 20, z: 14, label: 'Cold shelf',  verb: 'Grab garnish', time: 0.7, makes: 'garnish' },
   jukebox: { x: 22, z: 14, label: 'Jukebox',     verb: 'Kick jukebox', time: 0.5 },
+  tray:    { x: 13, z: 10, label: 'Tray stack',  verb: 'Grab a tray',  time: 0.5 },
   trough:  { x: 2,  z: 7,  label: 'Pig trough',  verb: 'Feed pigs',    time: 1.2 },
   dumpster:{ x: 2,  z: 1,  label: 'Dumpster',    verb: 'Toss',         time: 0.9 },
 };
@@ -74,6 +75,7 @@ export const STATION_LOOK = {
   mop:     { icon: '🧹', name: 'MOP',      tint: '#8a7a5a', face: Math.PI },
   jelly:   { icon: '🥬', name: 'COLD SHELF', tint: '#6d8177', face: Math.PI },
   jukebox: { icon: '🎵', name: 'JUKEBOX',  tint: '#b58cc9', face: Math.PI },
+  tray:    { icon: '🍽️', name: 'TRAYS',    tint: '#f4ebdd', face: 0 },
   trough:  { icon: '🐷', name: 'TROUGH',   tint: '#e8a8b8', face: -Math.PI / 2 },
   dumpster:{ icon: '🗑️', name: 'DUMPSTER', tint: '#6d8177', face: -Math.PI / 2 },
 };
@@ -184,6 +186,7 @@ export const ITEMS = {
   keg:       { label: 'Fresh keg',   tint: 0x8a6a3a, heavy: true },
   pig:       { label: 'An entire pig', tint: 0xe8a8b8, livestock: true },
   mopheld:   { label: 'Mop',         tint: 0x8a7a5a },
+  tray:      { label: 'Serving tray', tint: 0xb08c5a, twoHands: true, tray: true },
   shotgun:   { label: 'The Regulator', tint: 0x30343c, twoHands: true },
   phone:     { label: 'Dropped phone (evidence)', tint: 0x222831, evidence: true },
 };
@@ -264,6 +267,13 @@ export const TUNING = {
   playerRadius: 0.31, crewShoveStun: 0.9, crewShoveForce: 1.1,
   helpUpRadius: 1.35, helpUpLeaves: 0.2,
   pingCooldown: 2.0, pingSeconds: 7.0, pingDangerRadius: 6.5,
+  // ── the tray (bible §9 "trays trade speed for fragility") ──────────────
+  // Three items a trip instead of one. It is the difference between a walking
+  // simulator and a service game, and it is the single best slapstick object in
+  // the building: everything on it is one sprint, one spill, one coworker away
+  // from the floor.
+  trayCap: 3, traySlow: 0.8, trayLoadSlow: 0.055,
+  trayFumblePerSec: 1.15, trayDumpSpread: 0.55,
   patienceGraceAtDoor: 20,
   eatSeconds: 22, struggleEjectSeconds: 3.0,
   spillSlipChance: 0.35, shardStress: 8,

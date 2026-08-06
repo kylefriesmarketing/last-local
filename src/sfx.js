@@ -114,9 +114,10 @@ export const EVENT_CUES = {
   glassbreak: 'glassbreak', pigout: 'squeal', pigeat: 'squeal', slip: 'slip',
   fryersmoke: 'fryersmoke', song: 'song', gameover: 'gameover',
   throw: 'throw', catch: 'catch', bonk: 'bonk', tourbus: 'tourbus', busgone: 'busgone',
-  kegdry: 'complaint', kegtapped: 'served', kegdrop: 'telegraph',
+  kegdry: 'keg', kegtapped: 'served', kegdrop: 'telegraph',
   pigscoop: 'squeal', pigsquirm: 'squeal', pigtoss: 'squeal', pigpenned: 'catch',
   shove: 'bonk', shovedback: 'bonk', fumble: 'glassbreak',
   ping: 'ping', crewshove: 'crewshove', helpup: 'helpup', paid: 'cash',
-  phase: 'phase', kegdry: 'keg', gatebreak: 'crewshove', ejected: 'bonk',
+  traygrab: 'catch', trayload: 'ordertaken', traydump: 'glassbreak',
+  phase: 'phase', gatebreak: 'crewshove', ejected: 'bonk',
 };
