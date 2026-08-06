@@ -369,6 +369,7 @@ function setupTouch() {
   tap('t-act', () => queueCmd({ c: 'act' }));
   tap('t-drop', () => queueCmd({ c: 'drop' }));
   tap('t-q', () => queueCmd({ c: 'ability' }));
+  tap('t-ping', () => queueCmd({ c: 'ping' }));
   const tb = $('t-throw');
   tb.addEventListener('pointerdown', (e) => {
     e.preventDefault();
@@ -392,7 +393,7 @@ function drainView() {
   for (const e of game.view) {
     hud.onEvent(e, game);
     view.onEvent(e);
-    const cueKey = sfx.EVENT_CUES[e.kind];
+    const cueKey = (e.kind === 'phase' && e.id === 'last_call') ? 'lastcall' : sfx.EVENT_CUES[e.kind];
     if (cueKey) { sfx.cue(cueKey); }
   }
   game.view.length = 0;
@@ -456,6 +457,7 @@ function frame(t) {
   }
   if (hud && game && !game.over) {
     hud.sync(game, game.players[mp ? mp.myPid : 0], dt, chargePower(), stallSeconds);
+    sfx.setPressure(hud.danger);   // the mix tracks the same danger the screen shows
   }
   if (voice && game && mp) { voice.update(game, mp.myPid); }
 }

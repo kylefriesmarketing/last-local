@@ -43,6 +43,9 @@ const EVENT_TOASTS = {
   stoolfreed:  { text: '🪑 The stool is liberated. A local nods.', cls: 'good' },
   ejected:     { text: '🚪 And STAY out.', cls: '' },
   slip:        { text: '🫠 Somebody found the spill.', cls: '' },
+  crewshove:   { text: '💢 You BARGED into your own coworker.', cls: 'warn' },
+  helpup:      { text: '🤝 Back on your feet.', cls: 'good' },
+  feedpour:    { text: '🌾 Feed is down. Here, pig.', cls: '' },
   glassbreak:  { text: '🍺 Glass down! Shards everywhere.', cls: 'warn' },
   clipboard:   { text: '🖊️ The quiet one wrote something down.', cls: 'warn' },
   song:        { text: '🎸 Jo plays the one everybody knows.', cls: 'good' },
@@ -93,7 +96,36 @@ export class Hud {
     setTimeout(() => el.remove(), 6100);
   }
 
+  /** The turn of a phase is the shift's punctuation. It used to be a word
+   *  quietly changing in the top bar; nobody noticed the night escalating. */
+  phaseCard(id) {
+    const card = $('phasecard');
+    const titles = {
+      prep: 'PREP', warm: 'WARM SERVICE', compression: 'COMPRESSION',
+      break: 'THE BREAK POINT', last_call: 'LAST CALL',
+    };
+    card.querySelector('b').textContent = titles[id] || id.toUpperCase();
+    card.querySelector('i').textContent = PHASE_LINES[id] || '';
+    card.style.display = 'flex';
+    const inner = card.firstElementChild;
+    inner.style.animation = 'none';
+    void inner.offsetWidth;            // restart the keyframes (toybox trick)
+    inner.style.animation = '';
+    clearTimeout(this._pcT);
+    this._pcT = setTimeout(() => { card.style.display = 'none'; }, 3300);
+  }
+
   onEvent(e, game) {
+    if (e.kind === 'phase') { this.phaseCard(e.id); return; }
+    if (e.kind === 'paid') {
+      const el = $('cashpop');
+      el.textContent = '+$' + (e.amount / 100).toFixed(0)
+        + (e.tip > 0 ? '  (tip $' + (e.tip / 100).toFixed(0) + ')' : '');
+      el.classList.remove('go');
+      void el.offsetWidth;
+      el.classList.add('go');
+      return;
+    }
     if (e.kind === 'telegraph') {
       const line = TELEGRAPH_LINES[e.key];
       if (line) {
@@ -189,6 +221,24 @@ export class Hud {
       this.telegraphT -= dt;
       if (this.telegraphT <= 0) { $('telegraph').style.display = 'none'; }
     }
+
+    // ── readable panic ────────────────────────────────────────────────────
+    // One honest number from live sim state, not a mood light. It is what the
+    // room would feel like: people shouting at you, something on fire, a pig.
+    let danger = 0;
+    for (const q of game.parties) {
+      if (q.state === 'complaining') { danger += 0.3; }
+    }
+    for (const o of game.orders) {
+      if (o.state === 'open' && o.tLeft / o.total < 0.25) { danger += 0.22; }
+    }
+    if (game.fryer.smoking) { danger += 0.35; }
+    for (const pg of game.pigs) { if (pg.loose && !pg.carriedBy) { danger += 0.16; } }
+    if (!game.shotgun.stowed) { danger += 0.45; }
+    if (game.busClock != null && game.busClock < 25) { danger += 0.3; }
+    if (game.tracks.hospitality < 25) { danger += 0.3; }
+    this.danger = (this.danger || 0) + ((Math.min(1, danger) - (this.danger || 0)) * Math.min(1, dt * 2.2));
+    $('vignette').style.opacity = (this.danger * 0.62).toFixed(3);
   }
 
   aftermath(result, game) {

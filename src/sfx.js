@@ -85,8 +85,27 @@ export function cue(kind) {
     case 'bonk': tone(150, 0.16, 'square', 0.14, 0, 85); noise(0.07, 0.16, 700); break;
     case 'tourbus': noise(0.9, 0.16, 420); tone(92, 0.7, 'sawtooth', 0.05); break;
     case 'busgone': tone(220, 0.28, 'square', 0.1, 0, 180); tone(220, 0.4, 'square', 0.1, 0.34, 170); break;
+    // ── new beats: the crew, the money, the shape of the night ────────────
+    case 'ping': tone(1046, 0.09, 'sine', 0.12); tone(1568, 0.14, 'sine', 0.1, 0.07); break;
+    case 'crewshove': tone(110, 0.2, 'square', 0.16, 0, 70); noise(0.12, 0.2, 600); break;
+    case 'helpup': tone(392, 0.12, 'sine', 0.1); tone(587, 0.18, 'sine', 0.09, 0.09); break;
+    case 'cash': tone(1568, 0.05, 'square', 0.07); tone(2093, 0.09, 'square', 0.06, 0.05);
+      tone(1046, 0.16, 'triangle', 0.05, 0.1); break;
+    case 'phase': [330, 415, 494].forEach((n, i) => tone(n, 0.5, 'triangle', 0.09, i * 0.13)); break;
+    case 'lastcall': [494, 415, 330, 247].forEach((n, i) => tone(n, 0.6, 'sine', 0.11, i * 0.2));
+      noise(0.5, 0.07, 400); break;
+    case 'keg': noise(0.35, 0.18, 300); tone(70, 0.4, 'sine', 0.16, 0, 48); break;
     default: break;
   }
+}
+
+/** The bar gets louder and slightly meaner as the night goes wrong. One knob,
+ *  driven from the same danger read the vignette uses — audio is an information
+ *  system (bible §33), so it must track the same truth the screen does. */
+export function setPressure(v01) {
+  if (!ac || muted) { return; }
+  const p = Math.max(0, Math.min(1, v01 || 0));
+  master.gain.setTargetAtTime(0.5 + p * 0.16, ac.currentTime, 0.4);
 }
 
 export const EVENT_CUES = {
@@ -98,4 +117,6 @@ export const EVENT_CUES = {
   kegdry: 'complaint', kegtapped: 'served', kegdrop: 'telegraph',
   pigscoop: 'squeal', pigsquirm: 'squeal', pigtoss: 'squeal', pigpenned: 'catch',
   shove: 'bonk', shovedback: 'bonk', fumble: 'glassbreak',
+  ping: 'ping', crewshove: 'crewshove', helpup: 'helpup', paid: 'cash',
+  phase: 'phase', kegdry: 'keg', gatebreak: 'crewshove', ejected: 'bonk',
 };

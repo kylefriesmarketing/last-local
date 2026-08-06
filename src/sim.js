@@ -575,7 +575,8 @@ export class Game {
     party.satisfied = ord.tLeft / ord.total;
     party.pay = req.pay;
     p.stats.served++;
-    this.ev('served', { tableId: ord.tableId, path });
+    const st = this.tables.find((q) => q.id === ord.tableId);
+    this.ev('served', { tableId: ord.tableId, path, x: st ? st.x + 0.5 : p.x, z: st ? st.z + 0.5 : p.z });
     if (req.redeliver && !ord.redelivered) {
       // the influencer's shot died: same item, again (bible §17 signature)
       party.state = 'deciding'; party.decideT = 4;
@@ -589,7 +590,10 @@ export class Game {
     const arche = ARCHETYPES[party.arche];
     let tip = party.pay * (party.satisfied > 0.5 ? TUNING.tipHappy : TUNING.tipOk) * arche.tipMul;
     if (party.bus && this.busClock != null) { tip += party.pay * TUNING.busTipBonus; }
-    this.track('cash', Math.round(party.pay + tip), 'evt.pay.t' + tbl.id, arche.label + ' paid');
+    const total = Math.round(party.pay + tip);
+    // the view floats the money where the money actually happened
+    this.ev('paid', { tableId: tbl.id, amount: total, tip: Math.round(tip), x: tbl.x + 0.5, z: tbl.z + 0.5 });
+    this.track('cash', total, 'evt.pay.t' + tbl.id, arche.label + ' paid');
     this.track('hospitality', party.satisfied > 0.5 ? 2 : 1, 'evt.pay.t' + tbl.id, 'service landed');
     if (arche.local) { this.track('loyalty', 2, 'evt.local.happy', 'a local went home happy'); }
     if (arche.gentOnHappy && party.satisfied > 0.5) {
@@ -621,8 +625,9 @@ export class Game {
       const o = this.orders.find((x) => x.partyId === q.id && x.state === 'social');
       if (o && q.arche === 'oldlocal') { o.state = 'done'; q.state = 'waitpay'; q.pay = 900; q.satisfied = 1; this.ev('stoolfreed', { tableId: o.tableId }); }
     }
+    const et = this.tables.find((q) => q.id === party.tableId);
     this.partyLeave(party, 'ejected');
-    this.ev('ejected', { arche: party.arche });
+    this.ev('ejected', { arche: party.arche, x: et ? et.x + 0.5 : p.x, z: et ? et.z + 0.5 : p.z });
   }
 
   partyLeave(party, why) {
@@ -712,7 +717,10 @@ export class Game {
     if (!WALK[z * W + x]) { return; }
     if (this.spills.some((s) => s.x === x && s.z === z)) { return; }
     this.spills.push({ x, z, kind });
-    this.ev('spill', { x, z, kind });
+    // ⚠ `what:`, never `kind:` — ev() Object.assigns the payload OVER the event
+    // kind, so `{kind}` here silently renamed the event to 'shards' and the view
+    // never saw a 'spill'. This is the exact trap the README warns about.
+    this.ev('spill', { x, z, what: kind });
   }
 
   cleanSpill(p, s) {

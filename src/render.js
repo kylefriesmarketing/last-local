@@ -1138,6 +1138,7 @@ export class View {
     }
     this.syncFocus(this.focusHint, t);
     this.syncPings(game, t);
+    this.stepImpacts(dt);
     for (const b of this.stringBulbs || []) {
       b.material.color.setHSL(0.09, 0.72, 0.62 + Math.sin(t * 1.4 + b.userData.ph) * 0.06);
     }
@@ -1169,8 +1170,16 @@ export class View {
       let roll = 0;
       if (p0.stun > 1.0) { eyeY = 0.45; roll = 0.55; } // knocked flat, seeing stars
       else if (p0.stun > 0) { roll = Math.sin(t * 22) * 0.05; }
-      this.camera.position.set(p0.x, eyeY, p0.z);
-      this.camera.rotation.set(this.lookPitch, -this.lookYaw, roll);
+      const sh = this.shakeT || 0;
+      const sk = sh * sh * 0.09;                       // squared: taps stay subtle
+      this.camera.position.set(
+        p0.x + Math.sin(t * 61) * sk,
+        eyeY + Math.sin(t * 74) * sk,
+        p0.z + Math.cos(t * 55) * sk);
+      this.camera.rotation.set(
+        this.lookPitch + Math.sin(t * 47) * sk * 0.6,
+        -this.lookYaw + Math.cos(t * 43) * sk * 0.6,
+        roll + Math.sin(t * 39) * sk * 1.2);
       this.camera.fov = 74;
       this.camera.updateProjectionMatrix();
       this.syncViewModel(p0.carry ? p0.carry.kind : null);
@@ -1229,18 +1238,156 @@ export class View {
     this.smokeSprites.push(sp);
   }
 
+  // ── impact layer (view-only; every action gets a physical acknowledgement) ─
+  /** Camera kick. Genre non-negotiable: without it, breaking a tray of glass and
+   *  pouring a beer feel exactly the same. Scaled by distance so the far side of
+   *  the room registers as a rumble, not a punch. */
+  shake(amount, x, z) {
+    if (x != null) {
+      const d = Math.hypot(x - this.camera.position.x, z - this.camera.position.z);
+      amount *= Math.max(0.12, 1 - (d / 16));
+    }
+    this.shakeT = Math.min(1.2, (this.shakeT || 0) + amount);
+  }
+
+  /** Pooled debris burst. Meshes, not sprites, so shards catch the bar light. */
+  burst(x, y, z, opt = {}) {
+    if (!this.bits) {
+      this.bits = [];
+      this.bitPool = [];
+      const geo = new THREE.BoxGeometry(0.07, 0.07, 0.07);
+      for (let i = 0; i < 90; i++) {
+        const m = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.4 }));
+        m.visible = false;
+        this.scene.add(m);
+        this.bitPool.push(m);
+      }
+    }
+    const n = Math.min(opt.count || 8, this.bitPool.length);
+    for (let i = 0; i < n; i++) {
+      const m = this.bitPool.pop();
+      if (!m) { return; }
+      m.visible = true;
+      m.position.set(x, y, z);
+      m.scale.setScalar(0.6 + Math.random() * (opt.big ? 1.6 : 0.8));
+      m.material.color.setHex(opt.color == null ? 0xd8e8f0 : opt.color);
+      const a = Math.random() * Math.PI * 2;
+      const sp = (opt.speed || 2.4) * (0.4 + Math.random());
+      this.bits.push({
+        m, vx: Math.cos(a) * sp, vz: Math.sin(a) * sp,
+        vy: (opt.up == null ? 2.6 : opt.up) * (0.5 + Math.random()),
+        life: opt.life || 1.1, t: 0,
+        rx: (Math.random() - 0.5) * 12, ry: (Math.random() - 0.5) * 12,
+      });
+    }
+  }
+
+  /** A number/word that rises off the thing that caused it. */
+  float(text, x, y, z, tint) {
+    if (!this.floats) { this.floats = []; }
+    // bounded: a busy last call can pay six tables in a second and the screen
+    // must not turn into a wall of numbers
+    while (this.floats.length >= 14) {
+      const old = this.floats.shift();
+      this.scene.remove(old.sp);
+    }
+    const sp = new THREE.Sprite(new THREE.SpriteMaterial({
+      map: this.labelTex(text, tint || '#8fca8f'), transparent: true,
+      depthWrite: false, depthTest: false,
+    }));
+    sp.position.set(x, y, z);
+    sp.scale.set(1.2, 0.3, 1);
+    this.scene.add(sp);
+    this.floats.push({ sp, t: 0 });
+  }
+
+  stepImpacts(dt) {
+    if (this.bits) {
+      for (let i = this.bits.length - 1; i >= 0; i--) {
+        const b = this.bits[i];
+        b.t += dt;
+        b.vy -= 15 * dt;
+        b.m.position.x += b.vx * dt;
+        b.m.position.z += b.vz * dt;
+        b.m.position.y += b.vy * dt;
+        if (b.m.position.y < 0.03) { b.m.position.y = 0.03; b.vy *= -0.32; b.vx *= 0.6; b.vz *= 0.6; }
+        b.m.rotation.x += b.rx * dt;
+        b.m.rotation.y += b.ry * dt;
+        if (b.t > b.life) {
+          b.m.visible = false;
+          this.bitPool.push(b.m);
+          this.bits.splice(i, 1);
+        }
+      }
+    }
+    if (this.floats) {
+      for (let i = this.floats.length - 1; i >= 0; i--) {
+        const f = this.floats[i];
+        f.t += dt;
+        f.sp.position.y += dt * 0.9;
+        f.sp.material.opacity = Math.max(0, 1 - f.t / 1.5);
+        if (f.t > 1.5) { this.scene.remove(f.sp); this.floats.splice(i, 1); }
+      }
+    }
+    if (this.shakeT > 0) { this.shakeT = Math.max(0, this.shakeT - dt * 2.6); }
+  }
+
   // view events from the sim
   onEvent(e) {
-    if (e.kind === 'gunfire') {
+    const k = e.kind;
+    if (k === 'gunfire') {
       this.flashT = 1;
-      const L = new THREE.PointLight(0xffe0a0, 4, 12);
+      this.shake(1.1);
+      this.burst(e.x, 1.3, e.z, { count: 16, color: 0xffe0a0, speed: 5, life: 0.8, big: true });
+      const L = new THREE.PointLight(0xffe0a0, 6, 14);
       L.position.set(e.x, 1.4, e.z);
       this.scene.add(L);
       setTimeout(() => this.scene.remove(L), 90);
-    } else if (e.kind === 'gatebreak') {
-      // handled by gate visual each frame
-    } else if (e.kind === 'fryersmoke') {
-      for (let i = 0; i < 4; i++) { this.puffSmoke(STATIONS.fryer.x + 0.5, 1.5, STATIONS.fryer.z + 0.5); }
+    } else if (k === 'glassbreak') {
+      this.shake(0.42, e.x, e.z);
+      this.burst(e.x, 0.7, e.z, { count: 14, color: 0xd8e8f0, speed: 3.2, life: 1.2 });
+    } else if (k === 'fryersmoke') {
+      this.shake(0.2);
+      for (let i = 0; i < 6; i++) { this.puffSmoke(STATIONS.fryer.x + 0.5, 1.5, STATIONS.fryer.z + 0.5); }
+    } else if (k === 'slip') {
+      this.shake(e.hard ? 0.72 : 0.3, e.x, e.z);
+      this.burst(e.x, 0.25, e.z, { count: 6, color: 0x4a6a78, speed: 1.8, up: 1.6, life: 0.7 });
+    } else if (k === 'crewshove') {
+      this.shake(0.5, e.x, e.z);
+      this.burst(e.x, 1.0, e.z, { count: 7, color: 0xf4ebdd, speed: 2.4, life: 0.6 });
+    } else if (k === 'shovedback') {
+      this.shake(0.6, e.x, e.z);
+    } else if (k === 'bonk') {
+      this.shake(0.38, e.x, e.z);
+      this.burst(e.x, 1.2, e.z, { count: 6, color: 0xf0e442, speed: 2.2, life: 0.6 });
+    } else if (k === 'paid') {
+      this.float('+$' + (e.amount / 100).toFixed(0), e.x, 1.5, e.z, '#8fca8f');
+      this.burst(e.x, 1.1, e.z, { count: 5, color: 0x7fc97f, speed: 1.4, up: 2.2, life: 0.9 });
+    } else if (k === 'served') {
+      this.float('SERVED', e.x, 1.5, e.z, '#d69a32');
+    } else if (k === 'ejected') {
+      this.shake(0.4, e.x, e.z);
+      this.float('OUT', e.x, 1.5, e.z, '#e0917a');
+    } else if (k === 'spill') {
+      const glass = e.what === 'shards';
+      this.burst(e.x + 0.5, 0.2, e.z + 0.5, {
+        count: glass ? 9 : 5, color: glass ? 0xd8e8f0 : 0x4a6a78,
+        speed: glass ? 2.2 : 1.2, up: 1.4, life: 0.8,
+      });
+    } else if (k === 'pigeat' || k === 'pigscoop' || k === 'pigtoss') {
+      this.shake(0.22, e.x, e.z);
+    } else if (k === 'kegtapped') {
+      this.shake(0.3);
+      this.burst(STATIONS.taps.x + 0.5, 1.3, STATIONS.taps.z + 0.5,
+        { count: 9, color: 0xd69a32, speed: 2, life: 0.8 });
+    } else if (k === 'gatebreak') {
+      this.shake(0.5, PEN_GATE.x, PEN_GATE.z);
+      this.burst(PEN_GATE.x + 0.5, 0.6, PEN_GATE.z + 0.5,
+        { count: 8, color: 0x6b4a2e, speed: 2.6, life: 1 });
+    } else if (k === 'helpup') {
+      this.float('UP YOU GET', e.x, 1.4, e.z, '#8fca8f');
+    } else if (k === 'phase') {
+      this.shake(0.18);
     }
   }
 }
