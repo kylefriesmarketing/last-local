@@ -96,4 +96,6 @@ export const EVENT_CUES = {
   fryersmoke: 'fryersmoke', song: 'song', gameover: 'gameover',
   throw: 'throw', catch: 'catch', bonk: 'bonk', tourbus: 'tourbus', busgone: 'busgone',
   kegdry: 'complaint', kegtapped: 'served', kegdrop: 'telegraph',
+  pigscoop: 'squeal', pigsquirm: 'squeal', pigtoss: 'squeal', pigpenned: 'catch',
+  shove: 'bonk', shovedback: 'bonk', fumble: 'glassbreak',
 };

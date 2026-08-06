@@ -341,6 +341,143 @@ T('sprint slip is a real knockdown', () => {
   ok(g.players[0].stun > 1.0, 'knockdown stun applied (' + g.players[0].stun.toFixed(2) + ')');
 });
 
+console.log('== pigs are furniture with opinions ==');
+T('scoop a loose pig, haul it, put it back in the pen', () => {
+  const g = new Game({ seed: 17, players: [{ employeeKey: 'cal' }] }); // Cal never fumbles a pig
+  g.gate = 'broken';
+  g.tracks.chaos = 10; // a loose pig means the night already earned some chaos
+                       // (the journal skips zero-net deltas, so chaos must have room to fall)
+  for (let i = 0; i < 20 * 25; i++) { g.tick(); g.view.length = 0; }
+  const pig = g.pigs.find((q) => q.loose);
+  ok(pig, 'a pig got out');
+  const p = g.players[0];
+  p.x = pig.x; p.z = pig.z;
+  const ctx = g.contextOf(p);
+  ok(ctx && ctx.verb === 'Grab the pig', 'scoop verb offered');
+  ctx.act();
+  eq(p.carry && p.carry.kind, 'pig', 'pig in arms');
+  // pig rides along
+  p.x = 8; p.z = 8;
+  g.tick();
+  ok(Math.hypot(pig.x - p.x, pig.z - p.z) < 0.1, 'pig follows the carrier');
+  g.gate = 'closed';
+  p.x = 2.5; p.z = 7.5; // in the mud
+  const put = g.contextOf(p);
+  ok(put && put.verb === 'Put the pig back', 'put-back verb in the pen');
+  put.act();
+  eq(p.carry, null, 'hands free');
+  ok(!pig.loose, 'pig is home');
+  ok(g.tracks.journal.some((j) => j.cause === 'evt.pig.penned'), 'attributed');
+});
+T('a carried pig squirms free for everyone except Cal', () => {
+  const squirms = (empKey) => {
+    const g = new Game({ seed: 8, players: [{ employeeKey: empKey }] });
+    const pig = g.pigs[0];
+    pig.loose = true;
+    const p = g.players[0];
+    p.x = pig.x; p.z = pig.z;
+    p.carry = { kind: 'pig', pigId: pig.id };
+    pig.carriedBy = 0;
+    for (let i = 0; i < 20 * 60; i++) {
+      g.tick();
+      g.view.length = 0;
+      if (!p.carry) { return true; }
+    }
+    return false;
+  };
+  ok(squirms('mara'), 'a manager cannot hold a pig for a minute');
+  ok(!squirms('cal'), 'Cal holds the pig (ranch kid)');
+});
+T('a tossed pig flies, lands stunned, and can be air-mailed into the pen', () => {
+  const g = new Game({ seed: 4 });
+  const pig = g.pigs[0];
+  pig.loose = true;
+  const p = g.players[0];
+  p.x = 8.5; p.z = 5.5; p.fx = 1; p.fz = 0;
+  p.carry = { kind: 'pig', pigId: pig.id };
+  pig.carriedBy = 0;
+  g.execCommand(0, { c: 'throw', p: 1 });
+  eq(p.carry, null, 'pig released');
+  ok(pig.x > 9.5, 'pig travelled (' + pig.x.toFixed(1) + ')');
+  ok(pig.stunT > 0, 'pig is briefly indignant');
+  ok(g.tracks.journal.some((j) => j.cause === 'evt.pig.tossed'), 'chaos attributed');
+  // aimed into the pen it counts as a return
+  const g2 = new Game({ seed: 4 });
+  const pig2 = g2.pigs[0];
+  pig2.loose = true;
+  const p2 = g2.players[0];
+  p2.x = 5.5; p2.z = 7.5; p2.fx = -1; p2.fz = 0;
+  p2.carry = { kind: 'pig', pigId: pig2.id };
+  pig2.carriedBy = 0;
+  g2.execCommand(0, { c: 'throw', p: 0.5 });
+  ok(!pig2.loose, 'pig landed home');
+});
+
+console.log('== bodies bump into bodies ==');
+T('sprinting through a guest shoves them aside', () => {
+  const g = new Game({ seed: 12 });
+  ok(g.spawnParty('tourist'), 'seat');
+  for (let i = 0; i < 30; i++) { g.tick(); g.view.length = 0; }
+  const guest = g.guests.find((x) => x.state !== 'gone');
+  ok(guest, 'a guest exists');
+  const p = g.players[0];
+  p.x = guest.x - 0.4; p.z = guest.z;
+  g.setInput(0, 1, 0, true);
+  const gx0 = guest.x;
+  let shoved = false;
+  for (let i = 0; i < 20 && !shoved; i++) {
+    p.x = guest.x - 0.4; p.z = guest.z;
+    g.tick();
+    for (const e of g.view) { if (e.kind === 'shove' || e.kind === 'shovedback') { shoved = true; } }
+    g.view.length = 0;
+  }
+  ok(shoved, 'shove fired');
+  ok(Math.abs(guest.x - gx0) > 0.3 || guest.slipT > 0, 'the guest moved or stumbled');
+});
+T('a rowdy party shoves back and you drop what you were holding', () => {
+  let shovedBack = false;
+  for (let seed = 1; seed <= 12 && !shovedBack; seed++) {
+    const g = new Game({ seed });
+    ok(g.spawnParty('bachelor'), 'seat the party');
+    g.parties[0].rowdy = true;
+    for (let i = 0; i < 30; i++) { g.tick(); g.view.length = 0; }
+    const guest = g.guests.find((x) => x.state !== 'gone');
+    if (!guest) { continue; }
+    const p = g.players[0];
+    p.carry = { kind: 'burger' };
+    g.setInput(0, 1, 0, true);
+    for (let i = 0; i < 30 && !shovedBack; i++) {
+      p.x = guest.x - 0.4; p.z = guest.z;
+      p.shoveCd = 0;
+      g.tick();
+      for (const e of g.view) { if (e.kind === 'shovedback') { shovedBack = true; } }
+      g.view.length = 0;
+    }
+    if (shovedBack) {
+      ok(g.players[0].stun > 0, 'you got sat down');
+      ok(g.tracks.journal.some((j) => j.cause === 'evt.shoved'), 'attributed');
+    }
+  }
+  ok(shovedBack, 'no shove-back in 12 seeds');
+});
+T('sprinting with a full pint eventually costs you the pint', () => {
+  const g = new Game({ seed: 6 });
+  const p = g.players[0];
+  p.carry = { kind: 'beer' };
+  p.x = 12.5; p.z = 6.5;
+  g.setInput(0, 1, 0, true);
+  let fumbled = false;
+  for (let i = 0; i < 20 * 30 && !fumbled; i++) {
+    if (!p.carry) { p.carry = { kind: 'beer' }; } // keep refilling to sample the roll
+    p.x = 12.5; p.z = 6.5;
+    g.tick();
+    for (const e of g.view) { if (e.kind === 'fumble') { fumbled = true; } }
+    g.view.length = 0;
+  }
+  ok(fumbled, 'fumble fired');
+  ok(g.spills.some((s) => s.kind === 'shards'), 'the pint broke');
+});
+
 console.log('== the keg loop ==');
 T('taps run dry, a hauled keg restores them', () => {
   const g = new Game({ seed: 21 });

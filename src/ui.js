@@ -56,6 +56,13 @@ const EVENT_TOASTS = {
   kegtapped:   { text: '🍻 Fresh keg tapped. The taps live again.', cls: 'good' },
   kegdrop:     { text: '🚚 Keg delivery — two fresh ones in the lot.', cls: 'good' },
   tooheavy:    { text: '🏋️ Too heavy to throw. Physics wins this one.', cls: '' },
+  pigscoop:    { text: '🐷 You are holding an entire pig.', cls: '' },
+  pigsquirm:   { text: '🐷 The pig wriggles free. Of course it does.', cls: 'warn' },
+  pigpenned:   { text: '🐷 Pig returned to the pen. Hero.', cls: 'good' },
+  pigtoss:     { text: '🐷 …you THREW the pig.', cls: 'warn' },
+  shove:       { text: '💢 You barged straight through somebody.', cls: '' },
+  shovedback:  { text: '💢 The party shoved back. You are on the floor.', cls: 'warn' },
+  fumble:      { text: '🫳 Fumbled it at speed.', cls: 'warn' },
 };
 
 export class Hud {

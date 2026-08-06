@@ -55,7 +55,7 @@ export class Game {
         pid: i, key: d.employeeKey, e, x: s.x + 0.5, z: s.z + 0.5,
         mx: 0, mz: 0, sprint: false, fx: 0, fz: 1, stamina: 1,
         carry: null, busy: null, stun: 0, abilityCd: 0, calBoost: 0,
-        isBot: !!d.isBot, botWait: 0,
+        isBot: !!d.isBot, botWait: 0, shoveCd: 0,
         stats: { served: 0, prepped: 0, cleaned: 0, ejections: 0, shells: 0 },
       };
     });
@@ -68,7 +68,10 @@ export class Game {
     this.orders = [];
     this.items = [];
     this.spills = [];   // {x,z,kind:'spill'|'shards'}
-    this.pigs = PIG_HOME.map((p, i) => ({ id: i, x: p.x + 0.5, z: p.z + 0.5, loose: false, tx: null, tz: null, eatT: 0 }));
+    this.pigs = PIG_HOME.map((p, i) => ({
+      id: i, x: p.x + 0.5, z: p.z + 0.5, loose: false,
+      tx: null, tz: null, eatT: 0, carriedBy: null, stunT: 0,
+    }));
     this.gate = 'closed'; // closed | broken | repaired(=closed)
     this.dishFault = false;
     this.dishDripT = 0;
@@ -138,6 +141,7 @@ export class Game {
   throwItem(p, power01) {
     if (!p.carry || p.busy) { return; }
     if (p.carry.kind === 'shotgun' || p.carry.kind === 'mopheld') { return; }
+    if (p.carry.kind === 'pig') { this.tossPig(p, Math.max(0, Math.min(1, power01 || 0))); return; }
     if (ITEMS[p.carry.kind] && ITEMS[p.carry.kind].heavy) { this.ev('tooheavy'); return; }
     const kind = p.carry.kind;
     p.carry = null;
@@ -151,6 +155,29 @@ export class Game {
       power: pw, thrower: p.pid, bonked: false,
     });
     this.ev('throw', { pid: p.pid, item: kind, power: pw });
+  }
+
+  /** A pig is not a projectile. It is a short, indignant flight. */
+  tossPig(p, power01) {
+    const pig = this.pigs.find((q) => q.id === p.carry.pigId);
+    p.carry = null;
+    if (!pig) { return; }
+    pig.carriedBy = null;
+    const dist = 1.2 + (power01 * 2.6);
+    const tx = p.x + (p.fx * dist);
+    const tz = p.z + (p.fz * dist);
+    if (!this.blockedAt(tx, tz)) { pig.x = tx; pig.z = tz; }
+    pig.stunT = TUNING.pigTossStun;
+    pig.tx = null;
+    pig.loose = tileAt(pig.x | 0, pig.z | 0) !== '_';
+    if (!pig.loose) {
+      this.track('chaos', -2, 'evt.pig.penned', 'a pig was returned by air');
+      this.ev('pigpenned', { id: pig.id });
+    } else {
+      this.track('chaos', 2, 'evt.pig.tossed', 'somebody threw a pig');
+      this.witnessMoment('pigtoss', pig.x, pig.z, 0.6);
+      this.ev('pigtoss', { id: pig.id, x: pig.x, z: pig.z });
+    }
   }
 
   flightTick(dt) {
@@ -296,10 +323,46 @@ export class Game {
     if (this.gate === 'broken' && near(PEN_GATE.x, PEN_GATE.z)) {
       return { verb: 'Repair gate', act: () => this.startBusy(p, 'Repairing gate', 2, () => { this.gate = 'closed'; this.ev('gatefixed'); }) };
     }
+    // scoop a loose pig (the single funniest verb in the building)
+    if (!p.carry) {
+      const pig = this.pigs.find((q) => q.loose && !q.carriedBy
+        && Math.hypot(q.x - p.x, q.z - p.z) < TUNING.pigScoopRadius);
+      if (pig) {
+        return { verb: 'Grab the pig', act: () => {
+          pig.carriedBy = p.pid;
+          p.carry = { kind: 'pig', pigId: pig.id };
+          this.ev('pigscoop', { pid: p.pid, id: pig.id });
+        } };
+      }
+    }
+    // put the pig back where pigs live
+    if (p.carry && p.carry.kind === 'pig' && (tileAt(px, pz) === '_' || near(PEN_GATE.x, PEN_GATE.z))) {
+      return { verb: 'Put the pig back', act: () => this.releasePig(p, true) };
+    }
     // pick up world item
     const it = this.items.find((i) => !i.held && Math.hypot(i.x - p.x, i.z - p.z) < 1.1);
     if (it && !p.carry) { return { verb: 'Pick up ' + (ITEMS[it.kind] || {}).label, act: () => { this.items.splice(this.items.indexOf(it), 1); p.carry = { kind: it.kind }; } }; }
     return null;
+  }
+
+  /** Drop a carried pig. penned = it's home (or it just wriggled free). */
+  releasePig(p, penned) {
+    if (!p.carry || p.carry.kind !== 'pig') { return; }
+    const pig = this.pigs.find((q) => q.id === p.carry.pigId);
+    p.carry = null;
+    if (!pig) { return; }
+    pig.carriedBy = null;
+    pig.x = p.x; pig.z = p.z;
+    pig.tx = null;
+    if (penned && (tileAt(p.x | 0, p.z | 0) === '_' || Math.hypot(PEN_GATE.x + 0.5 - p.x, PEN_GATE.z + 0.5 - p.z) < 1.6)) {
+      pig.loose = false;
+      pig.x = PIG_HOME[pig.id % PIG_HOME.length].x + 0.5;
+      pig.z = PIG_HOME[pig.id % PIG_HOME.length].z + 0.5;
+      this.track('chaos', -2, 'evt.pig.penned', 'a pig went back where pigs go');
+      this.ev('pigpenned', { id: pig.id });
+    } else {
+      this.ev('pigloose', { id: pig.id });
+    }
   }
 
   stationAction(p, key, s) {
@@ -365,10 +428,16 @@ export class Game {
   dropCarry(p, deliberate) {
     if (!p.carry) { return; }
     const kind = p.carry.kind;
+    if (kind === 'pig') { this.releasePig(p, true); return; }
     p.carry = null;
     if (kind === 'shotgun') { this.items.push({ id: this.nextId++, kind, x: p.x, z: p.z }); this.ev('gundrop'); return; }
     if (kind === 'mopheld') { return; }
-    if (kind === 'beer' && !deliberate) { this.addSpill(p.x | 0, p.z | 0, 'shards'); this.ev('glassbreak', { x: p.x, z: p.z }); return; }
+    // anything breakable that leaves your hands unwillingly, breaks
+    if (!deliberate && ITEMS[kind] && ITEMS[kind].fragile) {
+      this.addSpill(p.x | 0, p.z | 0, 'shards');
+      this.ev('glassbreak', { x: p.x, z: p.z });
+      return;
+    }
     this.items.push({ id: this.nextId++, kind, x: p.x, z: p.z });
   }
 
@@ -686,6 +755,24 @@ export class Game {
 
   // ── pigs (bible: unpredictable gameplay agents, comic abstraction) ───────
   pigTick(pig, dt) {
+    // being carried: you are now a pig-handler, and the pig has opinions
+    if (pig.carriedBy != null) {
+      const carrier = this.players[pig.carriedBy];
+      if (!carrier || !carrier.carry || carrier.carry.kind !== 'pig' || carrier.carry.pigId !== pig.id) {
+        pig.carriedBy = null;
+        return;
+      }
+      pig.x = carrier.x;
+      pig.z = carrier.z;
+      pig.loose = true;
+      // Cal grew up doing this; everyone else eventually loses the wrestling match
+      if (carrier.key !== 'cal' && carrier.calBoost <= 0 && this.rng() < TUNING.pigSquirmPerSec * dt) {
+        this.releasePig(carrier, false);
+        this.ev('pigsquirm', { pid: carrier.pid });
+      }
+      return;
+    }
+    if (pig.stunT > 0) { pig.stunT -= dt; return; }
     const speed = pig.chaseP != null ? TUNING.pigChase : TUNING.pigWalk;
     if (!pig.loose) {
       if (this.gate === 'broken') { pig.loose = true; this.ev('pigout', { id: pig.id }); }
@@ -948,8 +1035,10 @@ export class Game {
       if (p.carry) {
         speed *= p.carry.kind === 'shotgun' ? TUNING.shotgunSlow
           : p.carry.kind === 'keg' ? (p.calBoost > 0 ? 0.82 : TUNING.kegSlow)
-            : (p.calBoost > 0 ? 1 : TUNING.carrySlow);
+            : p.carry.kind === 'pig' ? TUNING.pigCarrySlow
+              : (p.calBoost > 0 ? 1 : TUNING.carrySlow);
       }
+      if (p.shoveCd > 0) { p.shoveCd -= dt; }
       if (p.sprint && p.stamina > 0.05) {
         speed *= TUNING.dashMul;
         p.stamina = Math.max(0, p.stamina - dt / TUNING.dashStamina);
@@ -963,7 +1052,39 @@ export class Game {
         if (!this.blockedAt(nx + Math.sign(p.mx) * 0.25, p.z)) { p.x = nx; }
         if (!this.blockedAt(p.x, nz + Math.sign(p.mz) * 0.25)) { p.z = nz; }
         // player slips
+        // hustling through a crowd moves people (and rowdy rooms shove back)
+        if (p.sprint && p.shoveCd <= 0) {
+          for (const g of this.guests) {
+            if (g.state === 'gone' || g.state === 'leaving') { continue; }
+            if (Math.hypot(g.x - p.x, g.z - p.z) > TUNING.shoveRadius) { continue; }
+            const gx = g.x + (p.mx / (Math.hypot(p.mx, p.mz) || 1)) * TUNING.shoveForce;
+            const gz = g.z + (p.mz / (Math.hypot(p.mx, p.mz) || 1)) * TUNING.shoveForce;
+            if (!this.blockedAt(gx, gz)) { g.x = gx; g.z = gz; }
+            g.slipT = Math.max(g.slipT, 0.6);
+            g.path = null;
+            p.shoveCd = 1.2;
+            const party = this.parties.find((q) => q.id === g.partyId);
+            if (party) {
+              party.mood -= 1;
+              if (party.rowdy && this.rng() < TUNING.shoveBackChance) {
+                p.stun = Math.max(p.stun, TUNING.shoveStun);
+                if (p.carry && p.carry.kind !== 'shotgun' && p.carry.kind !== 'mopheld') { this.dropCarry(p, false); }
+                this.track('chaos', 2, 'evt.shoved', 'the bachelor party shoved back');
+                this.ev('shovedback', { pid: p.pid, x: p.x, z: p.z });
+              } else {
+                this.ev('shove', { x: g.x, z: g.z });
+              }
+            }
+            break;
+          }
+        }
         const s = this.spills.find((sp) => sp.kind === 'spill' && sp.x === (p.x | 0) && sp.z === (p.z | 0));
+        // sprinting with something breakable is its own gamble
+        if (p.sprint && p.carry && ITEMS[p.carry.kind] && ITEMS[p.carry.kind].fragile
+          && this.rng() < TUNING.fumbleChancePerSec * dt) {
+          this.ev('fumble', { pid: p.pid, item: p.carry.kind });
+          this.dropCarry(p, false);
+        }
         if (s && this.rng() < TUNING.spillSlipChance * dt * (p.sprint ? 2.2 : 1)) {
           // full-speed hustle = a proper knockdown; a walk is just a stumble
           p.stun = p.sprint ? TUNING.knockdownSeconds : 0.8;
