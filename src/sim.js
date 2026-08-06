@@ -306,60 +306,79 @@ export class Game {
 
   // ── context action: the single readable verb (bible §8 tap interact) ─────
   contextHint(p) {
-    if (p.busy) { return { verb: p.busy.label + '…', progress: 1 - p.busy.tLeft / p.busy.total }; }
+    if (p.busy) {
+      return { verb: p.busy.label + '…', progress: 1 - p.busy.tLeft / p.busy.total,
+        at: p.busy.at, tag: 'busy' };
+    }
     const c = this.contextOf(p);
-    return c ? { verb: c.verb } : null;
+    return c ? { verb: c.verb, at: c.at, tag: c.tag, station: c.station, dead: !c.act } : null;
   }
 
+  /** Every context result carries `at` (world position) and `tag` (what kind of
+   *  thing it is). The view uses them to halo the actual object and float the
+   *  verb on it — bible §32 "thin warm rim plus icon". Pure data: no rng, no
+   *  state change, so bots/autopilot/tests are unaffected. */
   contextOf(p) {
     const px = p.x | 0; const pz = p.z | 0;
     const near = (x, z) => Math.abs(px - x) + Math.abs(pz - z) <= 1;
+    const at = (x, z, y) => ({ x, z, y: y == null ? 1.15 : y });
     // a coworker on the floor outranks everything — you can be the reason they
     // get up in half a second instead of lying there watching the shift burn
     const down = this.players.find((q) => q.pid !== p.pid && q.stun > TUNING.helpUpLeaves + 0.3
       && Math.hypot(q.x - p.x, q.z - p.z) < TUNING.helpUpRadius);
     if (down) {
-      return { verb: 'Help ' + down.e.label.split(' ')[0] + ' up', act: () => {
-        down.stun = TUNING.helpUpLeaves;
-        this.ev('helpup', { pid: p.pid, who: down.pid, x: down.x, z: down.z });
-      } };
+      return { verb: 'Help ' + down.e.label.split(' ')[0] + ' up', tag: 'crew',
+        at: at(down.x, down.z, 0.5), act: () => {
+          down.stun = TUNING.helpUpLeaves;
+          this.ev('helpup', { pid: p.pid, who: down.pid, x: down.x, z: down.z });
+        } };
     }
     // carried-item verbs first
     if (p.carry) {
       if (p.carry.kind === 'mopheld') {
         const s = this.spills.find((sp) => near(sp.x, sp.z));
-        if (s) { return { verb: s.kind === 'shards' ? 'Sweep shards' : 'Mop spill', act: () => this.cleanSpill(p, s) }; }
-        if (near(STATIONS.mop.x, STATIONS.mop.z)) { return { verb: 'Stow mop', act: () => { p.carry = null; } }; }
+        if (s) { return { verb: s.kind === 'shards' ? 'Sweep shards' : 'Mop spill', tag: 'mess', at: at(s.x + 0.5, s.z + 0.5, 0.3), act: () => this.cleanSpill(p, s) }; }
+        if (near(STATIONS.mop.x, STATIONS.mop.z)) { return { verb: 'Stow mop', tag: 'station', at: at(STATIONS.mop.x + 0.5, STATIONS.mop.z + 0.5), act: () => { p.carry = null; } }; }
       }
       if (p.carry.kind === 'shotgun' && near(STATIONS.shotgun.x, STATIONS.shotgun.z)) {
-        return { verb: 'Stow the Regulator', act: () => { this.shotgun.stowed = true; p.carry = null; this.ev('gunstow'); } };
+        return { verb: 'Stow the Regulator', tag: 'danger', at: at(STATIONS.shotgun.x + 0.5, STATIONS.shotgun.z + 0.5), act: () => { this.shotgun.stowed = true; p.carry = null; this.ev('gunstow'); } };
       }
       if (p.carry.kind === 'feed' && tileAt(px, pz) === '_') {
-        return { verb: 'Pour feed', act: () => { p.carry = null; this.ev('feedpour', { x: px, z: pz }); } };
+        return { verb: 'Pour feed', tag: 'pig', at: at(px + 0.5, pz + 0.5, 0.4), act: () => { p.carry = null; this.ev('feedpour', { x: px, z: pz }); } };
       }
       if (near(STATIONS.dumpster.x, STATIONS.dumpster.z)) {
-        return { verb: 'Toss ' + (ITEMS[p.carry.kind] || {}).label, act: () => this.tossDumpster(p) };
+        return { verb: 'Toss ' + (ITEMS[p.carry.kind] || {}).label, tag: 'station', at: at(STATIONS.dumpster.x + 0.5, STATIONS.dumpster.z + 0.5, 0.8), act: () => this.tossDumpster(p) };
       }
       // deliver to adjacent table
       const tbl = this.tables.find((t) => near(t.x, t.z) && t.partyId != null);
       if (tbl) {
         const ord = this.orders.find((o) => o.tableId === tbl.id && o.state === 'open');
-        if (ord) { return { verb: 'Serve table ' + tbl.id, act: () => this.deliver(p, tbl, ord) }; }
+        if (ord) {
+          const req = REQUESTS[ord.reqKey];
+          const right = p.carry.kind === req.needItem;
+          const fake = !right && req.substitute && p.carry.kind === req.substitute.item;
+          return { verb: right ? 'Serve table ' + tbl.id
+            : fake ? 'Pass it off as the real thing (T' + tbl.id + ')'
+              : 'Serve table ' + tbl.id + ' — they wanted ' + REQUESTS[ord.reqKey].label,
+          tag: fake ? 'risk' : right ? 'serve' : 'wrong',
+          at: at(tbl.x + 0.5, tbl.z + 0.5, 1.0), act: () => this.deliver(p, tbl, ord) };
+        }
       }
     }
     // table verbs
     const tbl = this.tables.find((t) => near(t.x, t.z) && t.partyId != null);
     if (tbl) {
       const party = this.parties.find((q) => q.id === tbl.partyId);
+      const tAt = at(tbl.x + 0.5, tbl.z + 0.5, 1.0);
       if (party) {
-        if (party.state === 'deciding' && party.decideT <= 0) { return { verb: 'Take order', act: () => this.takeOrder(p, tbl, party) }; }
-        if (party.state === 'waitpay') { return { verb: 'Collect payment', act: () => this.collect(p, tbl, party) }; }
+        if (party.state === 'deciding' && party.decideT <= 0) { return { verb: 'Take order', tag: 'serve', at: tAt, act: () => this.takeOrder(p, tbl, party) }; }
+        if (party.state === 'waitpay') { return { verb: 'Collect payment', tag: 'money', at: tAt, act: () => this.collect(p, tbl, party) }; }
         if (party.state === 'complaining' && !this.orders.some((o) => o.partyId === party.id)) {
           // ignored too long but recoverable: grovel and take the order anyway
-          return { verb: 'Take order (grovel)', act: () => { party.complainT = undefined; party.mood -= 1; this.takeOrder(p, tbl, party); } };
+          return { verb: 'Take order (grovel)', tag: 'serve', at: tAt, act: () => { party.complainT = undefined; party.mood -= 1; this.takeOrder(p, tbl, party); } };
         }
         if (party.state === 'complaining' || party.mood <= -2 || this.socialTargets(party).length) {
-          return { verb: 'Eject (struggle)', act: () => this.startBusy(p, 'Ejecting', TUNING.struggleEjectSeconds, () => this.eject(p, party, false)) };
+          return { verb: 'Eject (struggle)', tag: 'danger', at: tAt, act: () => this.startBusy(p, 'Ejecting', TUNING.struggleEjectSeconds, () => this.eject(p, party, false)) };
         }
       }
     }
@@ -368,18 +387,23 @@ export class Game {
       const s = STATIONS[key];
       if (!near(s.x, s.z)) { continue; }
       const a = this.stationAction(p, key, s);
-      if (a) { return a; }
+      if (a) {
+        a.at = a.at || at(s.x + 0.5, s.z + 0.5, key === 'trough' || key === 'dumpster' ? 0.7 : 1.35);
+        a.tag = a.tag || 'station';
+        a.station = key;
+        return a;
+      }
     }
     // pen gate repair
     if (this.gate === 'broken' && near(PEN_GATE.x, PEN_GATE.z)) {
-      return { verb: 'Repair gate', act: () => this.startBusy(p, 'Repairing gate', 2, () => { this.gate = 'closed'; this.ev('gatefixed'); }) };
+      return { verb: 'Repair gate', tag: 'fix', at: at(PEN_GATE.x + 0.5, PEN_GATE.z + 0.5, 0.7), act: () => this.startBusy(p, 'Repairing gate', 2, () => { this.gate = 'closed'; this.ev('gatefixed'); }) };
     }
     // scoop a loose pig (the single funniest verb in the building)
     if (!p.carry) {
       const pig = this.pigs.find((q) => q.loose && !q.carriedBy
         && Math.hypot(q.x - p.x, q.z - p.z) < TUNING.pigScoopRadius);
       if (pig) {
-        return { verb: 'Grab the pig', act: () => {
+        return { verb: 'Grab the pig', tag: 'pig', at: at(pig.x, pig.z, 0.5), act: () => {
           pig.carriedBy = p.pid;
           p.carry = { kind: 'pig', pigId: pig.id };
           this.ev('pigscoop', { pid: p.pid, id: pig.id });
@@ -388,11 +412,11 @@ export class Game {
     }
     // put the pig back where pigs live
     if (p.carry && p.carry.kind === 'pig' && (tileAt(px, pz) === '_' || near(PEN_GATE.x, PEN_GATE.z))) {
-      return { verb: 'Put the pig back', act: () => this.releasePig(p, true) };
+      return { verb: 'Put the pig back', tag: 'pig', at: at(px + 0.5, pz + 0.5, 0.5), act: () => this.releasePig(p, true) };
     }
     // pick up world item
     const it = this.items.find((i) => !i.held && Math.hypot(i.x - p.x, i.z - p.z) < 1.1);
-    if (it && !p.carry) { return { verb: 'Pick up ' + (ITEMS[it.kind] || {}).label, act: () => { this.items.splice(this.items.indexOf(it), 1); p.carry = { kind: it.kind }; } }; }
+    if (it && !p.carry) { return { verb: 'Pick up ' + (ITEMS[it.kind] || {}).label, tag: 'item', at: at(it.x, it.z, 0.35), act: () => { this.items.splice(this.items.indexOf(it), 1); p.carry = { kind: it.kind }; } }; }
     return null;
   }
 
@@ -472,7 +496,7 @@ export class Game {
   }
 
   startBusy(p, label, seconds, done) {
-    p.busy = { label, tLeft: seconds, total: seconds, done };
+    p.busy = { label, tLeft: seconds, total: seconds, done, at: { x: p.x, z: p.z, y: 1.35 } };
     p.lastStation = label;
   }
 

@@ -1,7 +1,10 @@
 // THE LAST LOCAL — view layer. Reads sim state, never writes it. Math.random
 // is allowed here (view-only); the sim never imports this file.
 import * as THREE from '../lib/three.module.js';
-import { LAYOUT, TABLES, STATIONS, PEN_GATE, ARCHETYPES, ITEMS, EMPLOYEES, SHIFT, TUNING, REQUESTS } from './data.js';
+import {
+  LAYOUT, TABLES, STATIONS, PEN_GATE, ARCHETYPES, ITEMS, EMPLOYEES, SHIFT,
+  TUNING, REQUESTS, STATION_LOOK, PING_LOOK,
+} from './data.js';
 
 const W = LAYOUT[0].length;
 const H = LAYOUT.length;
@@ -66,9 +69,14 @@ export class View {
 
   build(game) {
     const S = this.scene;
-    // lights: dim blue night + warm interior points
-    S.add(new THREE.HemisphereLight(0x46586c, 0x241a10, 0.9));
-    const moon = new THREE.DirectionalLight(0x7aa2b8, 0.5);
+    // Lights. The first-person pass proved the old rig was a cave: hemisphere
+    // 0.9 over near-black walls meant a wall two metres away was invisible, so
+    // the room read as a void with tables in it. A dive bar is DIM, not unlit —
+    // the fix is a warmer, stronger interior bounce plus a practical over every
+    // work surface, keeping the cold/warm contrast the bible asks for.
+    S.add(new THREE.HemisphereLight(0x5a6d80, 0x3a2a1c, 1.15));
+    S.add(new THREE.AmbientLight(0xffcf9a, 0.22)); // interior bounce off the wood
+    const moon = new THREE.DirectionalLight(0x9dc0d8, 0.55);
     moon.position.set(-14, 22, -10);
     moon.castShadow = true;
     moon.shadow.mapSize.set(1024, 1024);
@@ -76,14 +84,21 @@ export class View {
     moon.shadow.camera.top = 20; moon.shadow.camera.bottom = -20;
     this.moon = moon;
     S.add(moon);
-    const warm = (x, z, i = 2.0, d = 10) => {
+    this.warmLights = [];
+    const warm = (x, z, i = 2.0, d = 10, y = 2.7) => {
       const L = new THREE.PointLight(0xffb45e, i, d, 1.4);
-      L.position.set(x, 2.7, z);
+      L.position.set(x, y, z);
+      L.userData.base = i;
+      this.warmLights.push(L);
       S.add(L);
       return L;
     };
-    warm(11, 9.5, 2.6, 12); warm(15, 4.5); warm(9, 4.5); warm(20, 6.5, 1.6); warm(20, 2.5, 1.4);
+    warm(11, 9.5, 2.6, 12); warm(15, 4.5, 2.4); warm(9, 4.5, 2.4); warm(20, 6.5, 2.0); warm(20, 2.5, 1.8);
     this.barLight = warm(11.5, 12.5, 1.8, 9);
+    // practicals where the work happens — you must be able to SEE the station
+    warm(12, 11.4, 2.2, 9, 2.4);            // behind the bar
+    warm(11, 13.2, 2.0, 8, 2.4);            // the line
+    warm(21, 13.5, 1.5, 7, 2.4);            // the jukebox corner
     // cold utility light over the lot + a pen glow
     const lot = new THREE.PointLight(0x7aa2b8, 1.2, 9, 1.5);
     lot.position.set(3, 3.2, 2.5);
@@ -125,8 +140,19 @@ export class View {
     }
     S.add(floorGroup);
 
-    // walls
-    const wallMat = new THREE.MeshStandardMaterial({ color: 0x2b2019, roughness: 0.9 });
+    // walls — panelled wainscot over painted board, so a wall two metres away
+    // has grain and a horizontal line to read depth against
+    const wallTex = canvasTex((g, w, h) => {
+      g.fillStyle = '#5c4530'; g.fillRect(0, 0, w, h);
+      for (let i = 0; i < 10; i++) {          // vertical boards
+        g.fillStyle = i % 2 ? '#553f2b' : '#634a34';
+        g.fillRect(i * (w / 10), 0, (w / 10) - 1, h);
+      }
+      g.fillStyle = '#3b2b1d'; g.fillRect(0, h * 0.52, w, h * 0.48); // wainscot below
+      g.fillStyle = '#7a5c40'; g.fillRect(0, h * 0.5, w, 4);         // chair rail
+      g.fillStyle = 'rgba(0,0,0,.28)'; g.fillRect(0, 0, w, 6);
+    }, 128, 128);
+    const wallMat = new THREE.MeshStandardMaterial({ map: wallTex, roughness: 0.92 });
     const wallGeo = new THREE.BoxGeometry(1, 2.4, 1);
     for (let z = 0; z < H; z++) {
       for (let x = 0; x < W; x++) {
@@ -257,6 +283,8 @@ export class View {
     signGlow.position.set(15, 2.6, 1.6);
     this.scene.add(signGlow);
 
+    this.dressRoom();
+
     // first person gets a roof over the room (pen + lot stay under the sky)
     if (this.fpMode) {
       const ceilTex = canvasTex((g, w, h) => {
@@ -302,14 +330,254 @@ export class View {
           map: this.textTex(EMPLOYEES[p.key].label.split(' ')[0], '#f4ebdd'),
           transparent: true, depthWrite: false,
         }));
-        tag.scale.set(1.5, 0.42, 1);
-        tag.position.y = 2.0;
+        // 1.5 world units at arm's length filled a quarter of the screen the
+        // first time a teammate stood on top of me. Smaller, and it fades out
+        // when they're close enough that you can obviously see who it is.
+        tag.scale.set(1.0, 0.28, 1);
+        tag.position.y = 1.62;
+        m.userData.tag = tag;
         m.add(tag);
       }
       this.playerMeshes[p.pid] = m;
       S.add(m);
     }
     this.game = game;
+  }
+
+  /** Everything that makes the box a BAR. Pure dressing — no sim contact.
+   *  The first-person capture that motivated this showed five identical dark
+   *  surfaces: no landmark to orient by, no way to tell the fryer from the
+   *  dishwasher, and no sign that Montana existed outside. */
+  dressRoom() {
+    const S = this.scene;
+
+    // ── hanging station signage ────────────────────────────────────────────
+    for (const key of Object.keys(STATION_LOOK)) {
+      const st = STATIONS[key];
+      const look = STATION_LOOK[key];
+      if (!st) { continue; }
+      const tex = canvasTex((g, w, h) => {
+        g.fillStyle = '#150f0b'; g.fillRect(0, 0, w, h);
+        g.strokeStyle = look.tint; g.lineWidth = 6;
+        g.strokeRect(6, 6, w - 12, h - 12);
+        g.textAlign = 'center'; g.textBaseline = 'middle';
+        g.font = '52px serif';
+        g.fillText(look.icon, w * 0.22, h * 0.52);
+        g.fillStyle = look.tint;
+        g.font = 'bold 34px Georgia';
+        g.fillText(look.name, w * 0.62, h * 0.54);
+      }, 256, 80);
+      tex.magFilter = THREE.LinearFilter;
+      // TWO planes back to back, not one DoubleSide plane: a double-sided plane
+      // shows the texture MIRRORED from behind, and "REGISTER" backwards is worse
+      // than no sign at all (caught in the first capture of this pass).
+      for (const flip of [0, Math.PI]) {
+        const board = new THREE.Mesh(new THREE.PlaneGeometry(1.5, 0.47),
+          new THREE.MeshBasicMaterial({ map: tex, transparent: true }));
+        board.position.set(st.x + 0.5, 2.12, st.z + 0.5 + (flip ? -0.012 : 0.012));
+        board.rotation.y = look.face + flip;
+        S.add(board);
+      }
+      // a stub of chain so it hangs off the ceiling rather than floating
+      const chain = new THREE.Mesh(new THREE.CylinderGeometry(0.012, 0.012, 0.5, 4),
+        new THREE.MeshBasicMaterial({ color: 0x2a2118 }));
+      chain.position.set(st.x + 0.5, 2.58, st.z + 0.5);
+      S.add(chain);
+    }
+
+    // ── the back bar: bottles, glass rack, under-shelf glow ────────────────
+    const bottleCols = [0x6b8e23, 0x8b3a2f, 0xd9c07a, 0x2f4f6b, 0x7a4a8a, 0xc08a3a];
+    for (let x = 7; x <= 16; x++) {
+      if ([9, 11, 12, 15].includes(x)) { continue; } // stations own these tiles
+      for (let i = 0; i < 3; i++) {
+        const b = new THREE.Mesh(new THREE.CylinderGeometry(0.055, 0.07, 0.34 + (i % 2) * 0.1, 6),
+          new THREE.MeshStandardMaterial({
+            color: bottleCols[(x + i) % bottleCols.length], roughness: 0.25, metalness: 0.1,
+          }));
+        b.position.set(x + 0.2 + i * 0.3, 1.28, 10.72);
+        b.castShadow = true;
+        S.add(b);
+      }
+    }
+    const rack = new THREE.Mesh(new THREE.BoxGeometry(10.2, 0.08, 0.9),
+      new THREE.MeshStandardMaterial({ color: 0x30251a, roughness: 0.8 }));
+    rack.position.set(11.6, 2.18, 10.5);
+    S.add(rack);
+    for (let i = 0; i < 14; i++) {                        // glasses hanging stem-down
+      const gl = new THREE.Mesh(new THREE.ConeGeometry(0.09, 0.2, 8),
+        new THREE.MeshStandardMaterial({
+          color: 0xcfe6f0, roughness: 0.1, metalness: 0.2, transparent: true, opacity: 0.55,
+        }));
+      gl.position.set(7.2 + i * 0.68, 2.02, 10.3 + (i % 2) * 0.4);
+      S.add(gl);
+    }
+    const strip = new THREE.PointLight(0xffca7a, 1.5, 8, 1.5);
+    strip.position.set(11.6, 1.9, 10.6);
+    S.add(strip);
+
+    // ── windows: Montana is the whole point, and you could not see it ──────
+    const nightTex = canvasTex((g, w, h) => {
+      const sky = g.createLinearGradient(0, 0, 0, h);
+      sky.addColorStop(0, '#0b1c2a'); sky.addColorStop(0.55, '#16303f'); sky.addColorStop(1, '#20323a');
+      g.fillStyle = sky; g.fillRect(0, 0, w, h);
+      g.fillStyle = '#e8eef2';
+      for (let i = 0; i < 70; i++) {
+        g.globalAlpha = 0.25 + Math.random() * 0.7;
+        g.fillRect(Math.random() * w, Math.random() * h * 0.55, 1.6, 1.6);
+      }
+      g.globalAlpha = 1;
+      g.fillStyle = '#0a1720';                            // ridge line
+      g.beginPath(); g.moveTo(0, h);
+      for (let x = 0; x <= w; x += w / 9) {
+        g.lineTo(x, h * (0.58 + Math.sin(x * 0.021) * 0.13 + Math.cos(x * 0.007) * 0.06));
+      }
+      g.lineTo(w, h); g.closePath(); g.fill();
+      g.fillStyle = '#123'; g.globalAlpha = 0.8;
+      for (let i = 0; i < 26; i++) {                      // pines on the ridge
+        const px = Math.random() * w; const py = h * (0.62 + Math.random() * 0.16);
+        g.beginPath(); g.moveTo(px, py - 22); g.lineTo(px - 7, py); g.lineTo(px + 7, py);
+        g.closePath(); g.fill();
+      }
+    }, 256, 160);
+    const frameMat = new THREE.MeshStandardMaterial({ color: 0x2a1f16, roughness: 0.9 });
+    const window3 = (x, z, ry) => {
+      const f = new THREE.Mesh(new THREE.BoxGeometry(2.5, 1.5, 0.12), frameMat);
+      f.position.set(x, 1.72, z); f.rotation.y = ry; S.add(f);
+      const pane = new THREE.Mesh(new THREE.PlaneGeometry(2.2, 1.2),
+        new THREE.MeshBasicMaterial({ map: nightTex }));
+      pane.position.set(x + Math.sin(ry + Math.PI) * 0.08, 1.72, z + Math.cos(ry + Math.PI) * 0.08);
+      pane.rotation.y = ry + Math.PI;
+      S.add(pane);
+      const mull = new THREE.Mesh(new THREE.BoxGeometry(0.07, 1.24, 0.06), frameMat);
+      mull.position.copy(pane.position); mull.rotation.y = ry; S.add(mull);
+      const spill = new THREE.PointLight(0x8fb6d0, 0.5, 6, 1.6);
+      spill.position.set(x + Math.sin(ry + Math.PI) * 0.9, 1.9, z + Math.cos(ry + Math.PI) * 0.9);
+      S.add(spill);
+    };
+    window3(11, 1.02, Math.PI);  window3(19, 1.02, Math.PI);   // north wall, over the tables
+    window3(24.98, 5, Math.PI / 2); window3(24.98, 9, Math.PI / 2); // east wall
+
+    // ── the landmarks you navigate by ──────────────────────────────────────
+    const boneMat = new THREE.MeshStandardMaterial({ color: 0xcbb894, roughness: 0.85 });
+    const antler = new THREE.Group();
+    const plaque = new THREE.Mesh(new THREE.BoxGeometry(0.6, 0.5, 0.09), frameMat);
+    plaque.position.set(0, -0.16, -0.03);
+    antler.add(plaque);
+    const skull = new THREE.Mesh(new THREE.SphereGeometry(0.16, 10, 8), boneMat);
+    skull.scale.set(0.85, 1.15, 0.7);
+    skull.position.set(0, -0.08, 0.08);
+    antler.add(skull);
+    for (const side of [-1, 1]) {
+      const beam = new THREE.Mesh(new THREE.CylinderGeometry(0.032, 0.05, 0.9, 6), boneMat);
+      beam.position.set(side * 0.32, 0.28, 0.05);
+      beam.rotation.z = side * 0.62;
+      beam.rotation.x = -0.25;
+      antler.add(beam);
+      for (let i = 0; i < 3; i++) {               // tines fork UP off the beam
+        const t = new THREE.Mesh(new THREE.CylinderGeometry(0.02, 0.03, 0.3 + i * 0.06, 5), boneMat);
+        t.position.set(side * (0.2 + i * 0.22), 0.16 + i * 0.24, 0.1);
+        t.rotation.z = side * (0.15 - i * 0.1);
+        t.rotation.x = -0.35;
+        antler.add(t);
+      }
+    }
+    antler.position.set(15, 1.95, 1.12);
+    S.add(antler);
+    const beerNeon = canvasTex((g, w, h) => {
+      g.clearRect(0, 0, w, h);
+      g.font = 'bold 44px Georgia'; g.textAlign = 'center';
+      g.shadowColor = '#7ad0ff'; g.shadowBlur = 22; g.fillStyle = '#cfeaff';
+      g.fillText('COLD BEER', w / 2, h * 0.46);
+      g.font = 'italic 26px Georgia'; g.shadowColor = '#ff9ad0'; g.fillStyle = '#ffd6ea';
+      g.fillText('open till it isn’t', w / 2, h * 0.82);
+    }, 384, 128);
+    const bn = new THREE.Mesh(new THREE.PlaneGeometry(2.6, 0.86),
+      new THREE.MeshBasicMaterial({ map: beerNeon, transparent: true }));
+    bn.position.set(24.9, 2.15, 12); bn.rotation.y = -Math.PI / 2;
+    S.add(bn);
+    this.beerNeon = bn;
+    const bnGlow = new THREE.PointLight(0x8fd8ff, 1.1, 7, 1.6);
+    bnGlow.position.set(24, 2.1, 12); S.add(bnGlow);
+    // framed pictures — cheap, but they turn a wall into somewhere specific
+    const picTex = (a, b) => canvasTex((g, w, h) => {
+      g.fillStyle = a; g.fillRect(0, 0, w, h);
+      g.fillStyle = b;
+      g.beginPath(); g.moveTo(0, h);
+      for (let x = 0; x <= w; x += 12) { g.lineTo(x, h * (0.45 + Math.sin(x * 0.05) * 0.18)); }
+      g.lineTo(w, h); g.fill();
+      g.fillStyle = 'rgba(255,255,255,.75)';
+      g.beginPath(); g.arc(w * 0.74, h * 0.24, 9, 0, 7); g.fill();
+    }, 96, 72);
+    const pics = [[8, 1.05, 0, '#2b3d4a', '#101d24'], [21, 1.05, 0, '#3b3326', '#161208'],
+      [24.9, 5.5, -Math.PI / 2, '#2d3a2c', '#111a11']];
+    for (const [x, z, ry, a, b] of pics) {
+      const fr = new THREE.Mesh(new THREE.BoxGeometry(0.9, 0.7, 0.07), frameMat);
+      fr.position.set(x, 1.75, z + (ry ? 0 : 0.1)); fr.rotation.y = ry; S.add(fr);
+      const im = new THREE.Mesh(new THREE.PlaneGeometry(0.74, 0.55),
+        new THREE.MeshBasicMaterial({ map: picTex(a, b) }));
+      im.position.set(x + (ry ? -0.06 : 0), 1.75, z + (ry ? 0 : 0.15));
+      im.rotation.y = ry;   // face INTO the room (was +PI, i.e. into the wall)
+      S.add(im);
+    }
+    // ── the front door: the west end was a blank wall with a black hole in it ──
+    const jamb = new THREE.Mesh(new THREE.BoxGeometry(0.22, 2.3, 1.5), frameMat);
+    jamb.position.set(6.1, 1.15, 3.5); S.add(jamb);
+    const lintel = new THREE.Mesh(new THREE.BoxGeometry(0.26, 0.3, 1.9), frameMat);
+    lintel.position.set(6.1, 2.35, 3.5); S.add(lintel);
+    const openTex = canvasTex((g, w, h) => {
+      g.clearRect(0, 0, w, h);
+      g.font = 'bold 60px Georgia'; g.textAlign = 'center';
+      g.shadowColor = '#ff7a5a'; g.shadowBlur = 26; g.fillStyle = '#ffd0bf';
+      g.fillText('OPEN', w / 2, h * 0.66);
+    }, 256, 96);
+    const openSign = new THREE.Mesh(new THREE.PlaneGeometry(1.3, 0.5),
+      new THREE.MeshBasicMaterial({ map: openTex, transparent: true }));
+    openSign.position.set(6.28, 2.05, 3.5); openSign.rotation.y = Math.PI / 2;
+    S.add(openSign);
+    this.openSign = openSign;
+    const porch = new THREE.PointLight(0xffa070, 1.6, 7, 1.5);
+    porch.position.set(6.9, 2.2, 3.5); S.add(porch);
+    // coat hooks + a chalkboard, so the entry reads as somewhere people arrive
+    for (let i = 0; i < 4; i++) {
+      const hook = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.03, 0.16, 5),
+        new THREE.MeshStandardMaterial({ color: 0x3a2f24, roughness: 0.7 }));
+      hook.position.set(6.16, 1.7, 5.4 + i * 0.42);
+      hook.rotation.z = Math.PI / 2;
+      S.add(hook);
+    }
+    const boardTex = canvasTex((g, w, h) => {
+      g.fillStyle = '#1d241f'; g.fillRect(0, 0, w, h);
+      g.strokeStyle = '#e8e2d4'; g.lineWidth = 2;
+      g.font = 'italic 22px Georgia'; g.textAlign = 'center';
+      g.fillStyle = '#e8e2d4';
+      g.fillText('TONIGHT', w / 2, 30);
+      g.font = '18px Georgia';
+      g.fillText('burgers · cold beer', w / 2, 58);
+      g.fillText('no oat milk. stop asking.', w / 2, 82);
+    }, 200, 100);
+    const board = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.8, 1.4), frameMat);
+    board.position.set(6.14, 1.5, 8.6); S.add(board);
+    const boardArt = new THREE.Mesh(new THREE.PlaneGeometry(1.2, 0.66),
+      new THREE.MeshBasicMaterial({ map: boardTex }));
+    boardArt.position.set(6.2, 1.5, 8.6); boardArt.rotation.y = Math.PI / 2;
+    S.add(boardArt);
+
+    // string lights across the room: the strongest single "this is a bar" cue
+    this.stringBulbs = [];
+    for (const [z, x0, x1] of [[4.2, 6.6, 24.4], [8.2, 6.6, 24.4]]) {
+      const n = 16;
+      for (let i = 0; i <= n; i++) {
+        const f = i / n;
+        const x = x0 + (x1 - x0) * f;
+        const y = 2.62 - Math.sin(f * Math.PI) * 0.26;
+        const b = new THREE.Mesh(new THREE.SphereGeometry(0.065, 8, 6),
+          new THREE.MeshBasicMaterial({ color: i % 3 === 0 ? 0xffd9a0 : 0xffb45e }));
+        b.position.set(x, y, z);
+        b.userData.ph = i * 0.7;
+        this.stringBulbs.push(b);
+        S.add(b);
+      }
+    }
   }
 
   textTex(text, color) {
@@ -327,46 +595,105 @@ export class View {
     return new THREE.CanvasTexture(c);
   }
 
-  glyphTex(glyph) {
-    if (this.glyphCache.has(glyph)) { return this.glyphCache.get(glyph); }
+  /** Table bubble. `frac` (0..1) draws a countdown ring instead of a glyph —
+   *  a bullet point told you nothing; a draining clock tells you WHICH table is
+   *  about to walk out, from across the room. Cached in twelfths. */
+  glyphTex(glyph, frac) {
+    const key = frac == null ? glyph : 'ring' + Math.round(frac * 12);
+    if (this.glyphCache.has(key)) { return this.glyphCache.get(key); }
     const c = document.createElement('canvas');
-    c.width = 96; c.height = 96;
+    c.width = 128; c.height = 128;
     const g = c.getContext('2d');
     g.fillStyle = '#f4ebdd';
     g.strokeStyle = '#17313a';
-    g.lineWidth = 5;
-    g.beginPath();
-    g.arc(48, 42, 34, 0, Math.PI * 2);
-    g.fill(); g.stroke();
-    g.beginPath();
-    g.moveTo(38, 70); g.lineTo(48, 90); g.lineTo(58, 70);
-    g.closePath();
-    g.fill(); g.stroke();
-    g.fillStyle = '#17313a';
-    g.font = 'bold 44px Georgia';
-    g.textAlign = 'center';
-    g.fillText(glyph, 48, 58);
+    g.lineWidth = 6;
+    g.beginPath(); g.arc(64, 56, 46, 0, Math.PI * 2); g.fill(); g.stroke();
+    g.beginPath(); g.moveTo(50, 94); g.lineTo(64, 122); g.lineTo(78, 94);
+    g.closePath(); g.fill(); g.stroke();
+    if (frac == null) {
+      g.fillStyle = '#17313a';
+      g.font = 'bold 64px Georgia';
+      g.textAlign = 'center'; g.textBaseline = 'middle';
+      g.fillText(glyph, 64, 58);
+    } else {
+      const f = Math.max(0, Math.min(1, frac));
+      g.fillStyle = '#d8d0c2';
+      g.beginPath(); g.arc(64, 56, 34, 0, Math.PI * 2); g.fill();
+      g.fillStyle = f > 0.5 ? '#4f7f5a' : f > 0.25 ? '#d69a32' : '#9d4e35';
+      g.beginPath(); g.moveTo(64, 56);
+      g.arc(64, 56, 34, -Math.PI / 2, -Math.PI / 2 + f * Math.PI * 2);
+      g.closePath(); g.fill();
+      g.fillStyle = '#f4ebdd';
+      g.beginPath(); g.arc(64, 56, 15, 0, Math.PI * 2); g.fill();
+    }
     const t = new THREE.CanvasTexture(c);
-    this.glyphCache.set(glyph, t);
+    this.glyphCache.set(key, t);
     return t;
   }
 
-  makePerson(tint, isPlayer = false) {
+  /** A person you can read at five metres in a dim room. The old version was a
+   *  cylinder + a sphere + a disc of hat: seated guests were indistinguishable
+   *  from the stools they sat on (verified in the pre-pass capture). Arms, a
+   *  face, and an archetype prop are all it takes. `arche` is optional. */
+  makePerson(tint, isPlayer = false, arche = null) {
     const g = new THREE.Group();
-    const body = new THREE.Mesh(new THREE.CylinderGeometry(0.26, 0.32, 0.72, 10),
-      new THREE.MeshStandardMaterial({ color: tint, roughness: 0.7 }));
+    const skin = new THREE.MeshStandardMaterial({ color: 0xf0c8a0, roughness: 0.8 });
+    const cloth = new THREE.MeshStandardMaterial({ color: tint, roughness: 0.7 });
+    const body = new THREE.Mesh(new THREE.CylinderGeometry(0.26, 0.32, 0.72, 10), cloth);
     body.position.y = 0.48;
     body.castShadow = true;
     g.add(body);
-    const head = new THREE.Mesh(new THREE.SphereGeometry(0.21, 12, 10),
-      new THREE.MeshStandardMaterial({ color: 0xf0c8a0, roughness: 0.8 }));
+    const arms = new THREE.Group();
+    for (const side of [-1, 1]) {
+      const arm = new THREE.Mesh(new THREE.CapsuleGeometry
+        ? new THREE.CapsuleGeometry(0.065, 0.34, 3, 6)
+        : new THREE.CylinderGeometry(0.065, 0.065, 0.44, 6), cloth);
+      arm.position.set(side * 0.3, 0.55, 0.04);
+      arm.rotation.z = side * 0.16;
+      arm.castShadow = true;
+      arms.add(arm);
+    }
+    g.add(arms);
+    const head = new THREE.Mesh(new THREE.SphereGeometry(0.21, 12, 10), skin);
     head.position.y = 1.05;
     head.castShadow = true;
     g.add(head);
-    const hat = new THREE.Mesh(new THREE.CylinderGeometry(0.23, 0.25, 0.09, 10),
-      new THREE.MeshStandardMaterial({ color: isPlayer ? 0x2b2019 : tint, roughness: 0.9 }));
+    // eyes: the cheapest possible "which way is this person looking"
+    for (const side of [-1, 1]) {
+      const eye = new THREE.Mesh(new THREE.SphereGeometry(0.036, 6, 5),
+        new THREE.MeshBasicMaterial({ color: 0x1a1410 }));
+      eye.position.set(side * 0.075, 1.09, 0.19);
+      g.add(eye);
+    }
+    const hatCol = isPlayer ? 0x2b2019 : (arche === 'oldlocal' ? 0x4a3320 : tint);
+    const brim = arche === 'oldlocal' ? 0.4 : 0.25;
+    const hat = new THREE.Mesh(new THREE.CylinderGeometry(0.23, brim, 0.09, 10),
+      new THREE.MeshStandardMaterial({ color: hatCol, roughness: 0.9 }));
     hat.position.y = 1.2;
     g.add(hat);
+    if (arche === 'oldlocal') {
+      const crown = new THREE.Mesh(new THREE.CylinderGeometry(0.17, 0.19, 0.16, 10),
+        new THREE.MeshStandardMaterial({ color: hatCol, roughness: 0.9 }));
+      crown.position.y = 1.3;
+      g.add(crown);
+    } else if (arche === 'influencer') {         // ring light, always on
+      const ring = new THREE.Mesh(new THREE.TorusGeometry(0.17, 0.032, 6, 18),
+        new THREE.MeshBasicMaterial({ color: 0xfff3c4 }));
+      ring.position.set(0.26, 1.18, 0.3);
+      g.add(ring);
+    } else if (arche === 'inspector') {          // the clipboard
+      const cb = new THREE.Mesh(new THREE.BoxGeometry(0.24, 0.3, 0.03),
+        new THREE.MeshStandardMaterial({ color: 0xe8e2d4, roughness: 0.9 }));
+      cb.position.set(0.24, 0.7, 0.24);
+      cb.rotation.x = -0.5;
+      g.add(cb);
+    } else if (arche === 'bachelor') {           // sash. of course there's a sash.
+      const sash = new THREE.Mesh(new THREE.BoxGeometry(0.62, 0.13, 0.62),
+        new THREE.MeshStandardMaterial({ color: 0xf0e442, roughness: 0.6 }));
+      sash.position.y = 0.62;
+      sash.rotation.y = 0.6;
+      g.add(sash);
+    }
     if (isPlayer) {
       const ring = new THREE.Mesh(new THREE.RingGeometry(0.34, 0.44, 24),
         new THREE.MeshBasicMaterial({ color: 0xd69a32, transparent: true, opacity: 0.7, side: THREE.DoubleSide }));
@@ -375,6 +702,8 @@ export class View {
       g.add(ring);
     }
     g.userData.body = body;
+    g.userData.arms = arms;
+    g.userData.cloth = cloth;
     return g;
   }
 
@@ -383,14 +712,30 @@ export class View {
     const vm = new THREE.Group();
     vm.position.set(0.34, -0.42, -0.72);
     const handMat = new THREE.MeshStandardMaterial({ color: 0xf0c8a0, roughness: 0.8 });
-    const hand = new THREE.Mesh(new THREE.CapsuleGeometry
-      ? new THREE.CapsuleGeometry(0.055, 0.16, 3, 8)
-      : new THREE.SphereGeometry(0.07, 8, 8), handMat);
-    hand.rotation.x = -0.9;
-    vm.add(hand);
-    const hand2 = hand.clone();
-    hand2.position.set(-0.62, -0.03, 0.05);
-    vm.add(hand2);
+    // sleeve + forearm + fist, not a floating sausage: the capture showed two
+    // detached tubes, which reads as a glitch rather than as your own arms
+    const sleeveMat = new THREE.MeshStandardMaterial({ color: 0x2f4a52, roughness: 0.85 });
+    const arm = (dx) => {
+      const gA = new THREE.Group();
+      const sleeve = new THREE.Mesh(new THREE.CylinderGeometry(0.075, 0.095, 0.42, 8), sleeveMat);
+      sleeve.position.set(0, -0.16, 0.24);
+      sleeve.rotation.x = -1.18;
+      gA.add(sleeve);
+      const fore = new THREE.Mesh(new THREE.CapsuleGeometry
+        ? new THREE.CapsuleGeometry(0.055, 0.2, 3, 8)
+        : new THREE.CylinderGeometry(0.055, 0.055, 0.3, 8), handMat);
+      fore.rotation.x = -1.05;
+      gA.add(fore);
+      const fist = new THREE.Mesh(new THREE.SphereGeometry(0.072, 8, 7), handMat);
+      fist.position.set(0, 0.09, -0.11);
+      fist.scale.set(1, 0.9, 1.15);
+      gA.add(fist);
+      gA.position.set(dx, 0, 0);
+      gA.rotation.z = dx > 0 ? -0.12 : 0.12;
+      return gA;
+    };
+    vm.add(arm(0));
+    vm.add(arm(-0.62));
     this.camera.add(vm);
     this.viewModel = vm;
     this.vmHolder = new THREE.Group();
@@ -418,6 +763,130 @@ export class View {
       m.position.set(-0.3, 0.05, -0.05);
     }
     this.vmHolder.add(m);
+  }
+
+  /** A label sprite for a short line of text, cached by content. Used by the
+   *  focus highlight and callout beacons — both change text rarely, so building
+   *  a canvas per frame would be the only expensive thing in this renderer. */
+  labelTex(text, tint, sub) {
+    const key = text + '|' + tint + '|' + (sub || '');
+    if (this.glyphCache.has(key)) { return this.glyphCache.get(key); }
+    const c = document.createElement('canvas');
+    c.width = 512; c.height = 128;
+    const g = c.getContext('2d');
+    g.font = 'bold 40px Georgia';
+    const w = Math.min(500, g.measureText(text).width + 54);
+    const x0 = (512 - w) / 2;
+    g.fillStyle = 'rgba(8,17,22,.88)';
+    g.beginPath(); g.roundRect(x0, sub ? 12 : 26, w, sub ? 74 : 62, 14); g.fill();
+    g.strokeStyle = tint; g.lineWidth = 3; g.stroke();
+    g.textAlign = 'center';
+    g.fillStyle = tint;
+    g.fillText(text, 256, sub ? 54 : 68);
+    if (sub) {
+      g.font = 'italic 24px Georgia';
+      g.fillStyle = 'rgba(244,235,221,.72)';
+      g.fillText(sub, 256, 80);
+    }
+    const t = new THREE.CanvasTexture(c);
+    this.glyphCache.set(key, t);
+    return t;
+  }
+
+  // ── focus highlight (bible §32: thin warm rim plus icon) ─────────────────
+  // Before this you had to memorise tile coordinates: the verb lived in a DOM
+  // chip at the bottom of the screen and NOTHING in the world told you which
+  // dark box it meant. Now the target wears the verb.
+  syncFocus(hint, t) {
+    if (!this.focusGroup) {
+      this.focusGroup = new THREE.Group();
+      this.focusHalo = new THREE.Mesh(new THREE.RingGeometry(0.42, 0.62, 28),
+        new THREE.MeshBasicMaterial({
+          color: 0xd69a32, transparent: true, opacity: 0.7,
+          side: THREE.DoubleSide, depthWrite: false,
+        }));
+      this.focusHalo.rotation.x = -Math.PI / 2;
+      this.focusGroup.add(this.focusHalo);
+      this.focusLabel = new THREE.Sprite(new THREE.SpriteMaterial({
+        transparent: true, depthWrite: false, depthTest: false,
+      }));
+      this.focusGroup.add(this.focusLabel);
+      this.scene.add(this.focusGroup);
+    }
+    const at = hint && hint.at;
+    this.focusGroup.visible = !!at;
+    if (!at) { return; }
+    const TAG_TINT = {
+      serve: '#d69a32', money: '#8fca8f', danger: '#e0917a', risk: '#e0917a',
+      wrong: '#8a8f96', mess: '#7aa2b8', pig: '#e8a8b8', crew: '#8fca8f',
+      fix: '#7aa2b8', busy: '#d69a32', item: '#f4ebdd', station: '#d69a32',
+    };
+    const tint = TAG_TINT[hint.tag] || '#d69a32';
+    const text = hint.progress != null ? hint.verb : hint.verb;
+    if (this.focusLabel.userData.text !== text + tint) {
+      this.focusLabel.userData.text = text + tint;
+      this.focusLabel.material.map = this.labelTex(text, tint,
+        hint.progress != null || hint.dead ? null : 'press E');
+      this.focusLabel.material.needsUpdate = true;
+    }
+    const pulse = 1 + Math.sin(t * 4.6) * 0.06;
+    this.focusGroup.position.set(at.x, 0, at.z);
+    this.focusHalo.position.y = 0.035;
+    this.focusHalo.scale.setScalar(pulse);
+    this.focusHalo.material.color.set(tint);
+    this.focusHalo.material.opacity = hint.dead ? 0.3 : 0.62;
+    // the focus target is by definition ~1m away, so a fixed world-scale sprite
+    // covered a third of the screen. Scale with distance to hold a constant,
+    // modest size on screen (captured, then dialled down).
+    const d = Math.hypot(at.x - this.camera.position.x, at.z - this.camera.position.z);
+    const wide = Math.max(0.55, Math.min(1.7, d * 0.40));
+    this.focusLabel.scale.set(wide, wide * 0.25, 1);
+    this.focusLabel.position.y = (at.y || 1.15) + (wide * 0.24) + Math.sin(t * 2.2) * 0.02;
+  }
+
+  // ── callout beacons: a friend shouting is a thing you can SEE ────────────
+  syncPings(game, t) {
+    if (!this.pingMeshes) { this.pingMeshes = new Map(); }
+    const live = new Set();
+    for (const pg of game.pings) {
+      live.add(pg.id);
+      let m = this.pingMeshes.get(pg.id);
+      const look = PING_LOOK[pg.kind] || PING_LOOK.here;
+      if (!m) {
+        m = new THREE.Group();
+        const beam = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.22, 3.2, 10, 1, true),
+          new THREE.MeshBasicMaterial({
+            color: look.tint, transparent: true, opacity: 0.2,
+            depthWrite: false, side: THREE.DoubleSide,
+          }));
+        beam.position.y = 1.6;
+        m.add(beam);
+        const sp = new THREE.Sprite(new THREE.SpriteMaterial({
+          map: this.labelTex(look.icon + ' ' + look.text,
+            '#' + look.tint.toString(16).padStart(6, '0'),
+            (EMPLOYEES[game.players[pg.pid] ? game.players[pg.pid].key : 'mara'] || {}).label),
+          transparent: true, depthWrite: false, depthTest: false,
+        }));
+        sp.scale.set(2.9, 0.73, 1);
+        sp.position.y = 2.5;
+        m.add(sp);
+        m.userData.beam = beam;
+        m.userData.sp = sp;
+        this.pingMeshes.set(pg.id, m);
+        this.scene.add(m);
+      }
+      const f = Math.min(1, pg.tLeft / TUNING.pingSeconds);
+      m.position.set(pg.x, 0, pg.z);
+      m.userData.beam.material.opacity = 0.24 * f * (0.7 + Math.sin(t * 7) * 0.3);
+      m.userData.sp.material.opacity = Math.min(1, f * 3);
+      const d = Math.hypot(pg.x - this.camera.position.x, pg.z - this.camera.position.z);
+      const wide = Math.max(1.1, Math.min(3.2, d * 0.42));
+      m.userData.sp.scale.set(wide, wide * 0.25, 1);
+      m.userData.sp.position.y = 2.5 + Math.sin(t * 3.4) * 0.06;
+    }
+    for (const [id, m] of this.pingMeshes) {
+      if (!live.has(id)) { this.scene.remove(m); this.pingMeshes.delete(id); }
+    }
   }
 
   makePig() {
@@ -487,6 +956,11 @@ export class View {
         m.rotation.x = 0;
         m.rotation.z = 0;
       }
+      if (m.userData.tag) {
+        const d = Math.hypot(p.x - this.camera.position.x, p.z - this.camera.position.z);
+        m.userData.tag.material.opacity = Math.max(0, Math.min(0.95, (d - 1.4) * 0.5));
+        m.userData.tag.visible = d > 1.5;
+      }
       // carried item as a small mesh in front
       this.syncCarry(m, p.carry ? p.carry.kind : null);
     }
@@ -497,7 +971,8 @@ export class View {
       liveGuests.add(g.id);
       let m = this.guestMeshes.get(g.id);
       if (!m) {
-        m = this.makePerson(ARCHETYPES[g.arche].tint);
+        m = this.makePerson(ARCHETYPES[g.arche].tint, false, g.arche);
+        m.userData.baseTint = new THREE.Color(ARCHETYPES[g.arche].tint);
         this.guestMeshes.set(g.id, m);
         S.add(m);
       }
@@ -505,7 +980,27 @@ export class View {
       const seated = g.state === 'seated';
       m.userData.body.scale.y = seated ? 0.78 : 1;
       if (g.slipT > 0) { m.rotation.z = 1.2; } else { m.rotation.z = 0; }
-      if (!seated) { m.userData.body.position.y = 0.48 + Math.abs(Math.sin(t * 8 + g.id)) * 0.04; }
+      if (seated) {
+        // face your table, not north: a room full of people staring the same way
+        // read as scenery. Now the guests look at each other and at you.
+        const tb = game.tables.find((q) => q.partyId === g.partyId);
+        if (tb) { m.rotation.y = Math.atan2(tb.x + 0.5 - g.x, tb.z + 0.5 - g.z); }
+        m.userData.arms.rotation.x = -0.7;      // elbows on the table
+      } else {
+        m.userData.body.position.y = 0.48 + Math.abs(Math.sin(t * 8 + g.id)) * 0.04;
+        m.userData.arms.rotation.x = Math.sin(t * 8 + g.id) * 0.4;
+        // last position lives on the MESH, never on the sim entity — the view
+        // does not get to write sim state, not even a harmless scratch field
+        const px = m.userData.px; const pz = m.userData.pz;
+        const dx = px == null ? 0 : g.x - px; const dz = pz == null ? 0 : g.z - pz;
+        if (Math.abs(dx) + Math.abs(dz) > 1e-4) { m.rotation.y = Math.atan2(dx, dz); }
+      }
+      m.userData.px = g.x; m.userData.pz = g.z;
+      // a party losing patience visibly reddens — readable panic at a glance
+      const party = game.parties.find((q) => q.id === g.partyId);
+      const heat = party ? Math.max(0, Math.min(1, (-party.mood) * 0.35
+        + (party.state === 'complaining' ? 0.8 : 0))) : 0;
+      m.userData.cloth.color.copy(m.userData.baseTint).lerp(new THREE.Color(0xc23a28), heat);
     }
     for (const [id, m] of this.guestMeshes) {
       if (!liveGuests.has(id)) { S.remove(m); this.guestMeshes.delete(id); }
@@ -571,6 +1066,7 @@ export class View {
       const tbl = game.tables.find((x) => x.id === party.tableId);
       if (!tbl) { continue; }
       let glyph = null;
+      let frac = null;
       let color = 0xf4ebdd;
       let bounce = 0;
       if (party.state === 'deciding' && party.decideT <= 0) {
@@ -584,10 +1080,10 @@ export class View {
       } else {
         const ord = game.orders.find((o) => o.partyId === party.id && o.state === 'open');
         if (ord) {
-          glyph = '•';
-          const pct = Math.max(0, ord.tLeft / ord.total);
-          color = pct > 0.5 ? 0x6d8177 : pct > 0.25 ? 0xd69a32 : 0x9d4e35;
-          if (pct <= 0.25) { bounce = Math.abs(Math.sin(t * 7)) * 0.1; }
+          frac = Math.max(0, ord.tLeft / ord.total);
+          glyph = 'ring';
+          color = 0xffffff;                       // the ring carries its own colour
+          if (frac <= 0.25) { bounce = Math.abs(Math.sin(t * 7)) * 0.12; }
         }
       }
       if (!glyph) { continue; }
@@ -595,17 +1091,21 @@ export class View {
       let sp = this.markerSprites.get(party.id);
       if (!sp) {
         sp = new THREE.Sprite(new THREE.SpriteMaterial({ transparent: true, depthWrite: false }));
-        sp.scale.set(0.8, 0.8, 1);
         this.markerSprites.set(party.id, sp);
         S.add(sp);
       }
-      if (sp.userData.glyph !== glyph) {
-        sp.userData.glyph = glyph;
-        sp.material.map = this.glyphTex(glyph);
+      const gkey = frac == null ? glyph : 'ring' + Math.round(frac * 12);
+      if (sp.userData.glyph !== gkey) {
+        sp.userData.glyph = gkey;
+        sp.material.map = this.glyphTex(glyph, frac);
         sp.material.needsUpdate = true;
       }
       sp.material.color.setHex(color);
-      sp.position.set(tbl.x + 0.5, 2.25 + bounce, tbl.z + 0.5);
+      // shrink up close, grow at range: a sprite at fixed world scale becomes a
+      // billboard in your face when you walk up to the table you are serving
+      const dcam = Math.hypot(tbl.x + 0.5 - this.camera.position.x, tbl.z + 0.5 - this.camera.position.z);
+      sp.scale.setScalar(Math.max(0.5, Math.min(1.25, 0.34 + dcam * 0.075)));
+      sp.position.set(tbl.x + 0.5, 1.95 + sp.scale.x * 0.4 + bounce, tbl.z + 0.5);
     }
     for (const [id, sp] of this.markerSprites) {
       if (!liveMarkers.has(id)) { S.remove(sp); this.markerSprites.delete(id); }
@@ -635,6 +1135,11 @@ export class View {
       this.arcLine.visible = true;
     } else if (this.arcLine) {
       this.arcLine.visible = false;
+    }
+    this.syncFocus(this.focusHint, t);
+    this.syncPings(game, t);
+    for (const b of this.stringBulbs || []) {
+      b.material.color.setHSL(0.09, 0.72, 0.62 + Math.sin(t * 1.4 + b.userData.ph) * 0.06);
     }
     // gate visual
     this.gateMesh.rotation.z = game.gate === 'broken' ? 0.9 : 0;

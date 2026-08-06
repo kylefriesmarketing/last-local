@@ -59,6 +59,39 @@ export const STATIONS = {
   dumpster:{ x: 2,  z: 1,  label: 'Dumpster',    verb: 'Toss',         time: 0.9 },
 };
 
+// Hanging signage. In first person you cannot read a dark box, and the bar is
+// lit like a bar — so every station wears its job on a lit board (bible §32
+// "interaction highlight: thin warm rim plus icon; color never sole signal").
+// `face` = the yaw the sign points, so it reads from the working side.
+export const STATION_LOOK = {
+  taps:    { icon: '🍺', name: 'TAPS',     tint: '#d69a32', face: 0 },
+  coffee:  { icon: '☕', name: 'COFFEE',   tint: '#c89a6a', face: 0 },
+  pos:     { icon: '💵', name: 'REGISTER', tint: '#8fca8f', face: 0 },
+  shotgun: { icon: '🔒', name: 'UNDER-BAR', tint: '#9d4e35', face: 0 },
+  grill:   { icon: '🍔', name: 'GRILL',    tint: '#9d4e35', face: Math.PI },
+  fryer:   { icon: '🍟', name: 'FRYER',    tint: '#f0e442', face: Math.PI },
+  dish:    { icon: '🧼', name: 'DISHES',   tint: '#7aa2b8', face: Math.PI },
+  mop:     { icon: '🧹', name: 'MOP',      tint: '#8a7a5a', face: Math.PI },
+  jelly:   { icon: '🥬', name: 'COLD SHELF', tint: '#6d8177', face: Math.PI },
+  jukebox: { icon: '🎵', name: 'JUKEBOX',  tint: '#b58cc9', face: Math.PI },
+  trough:  { icon: '🐷', name: 'TROUGH',   tint: '#e8a8b8', face: -Math.PI / 2 },
+  dumpster:{ icon: '🗑️', name: 'DUMPSTER', tint: '#6d8177', face: -Math.PI / 2 },
+};
+
+// Callout copy + colour (view-only, but the KEYS are sim-authored in callOut).
+export const PING_LOOK = {
+  help:  { icon: '🆘', text: 'HELP ME UP',      tint: 0xff6b5a },
+  fire:  { icon: '🔥', text: 'FIRE!',           tint: 0xff8a3a },
+  gun:   { icon: '⚠️', text: 'PUT IT AWAY',     tint: 0xff5a5a },
+  pig:   { icon: '🐷', text: 'PIG LOOSE',       tint: 0xe8a8b8 },
+  keg:   { icon: '🛢️', text: 'TAPS ARE DRY',    tint: 0xd69a32 },
+  order: { icon: '🗒️', text: 'ORDER UP',        tint: 0xf4ebdd },
+  money: { icon: '💵', text: 'THEY WANNA PAY',  tint: 0x8fca8f },
+  mess:  { icon: '💦', text: 'MESS HERE',       tint: 0x7aa2b8 },
+  hands: { icon: '🙌', text: 'NEED HANDS',      tint: 0xd69a32 },
+  here:  { icon: '📍', text: 'OVER HERE',       tint: 0xf4ebdd },
+};
+
 export const DOOR = { x: 5, z: 3 };
 export const PEN_GATE = { x: 5, z: 8 };
 export const GUEST_SPAWN = { x: 2, z: 3 };
@@ -87,23 +120,26 @@ export const EMPLOYEES = {
 };
 
 // ── Customer archetypes (bible §17) ────────────────────────────────────────
+// ⚠ `tint` is the guest's CLOTHES, and the pre-pass capture proved it has to
+// fight skin tone: a room of 0xe8b48c tourists read as a row of clay pots. Keep
+// these saturated and distinct from each other and from 0xf0c8a0 skin.
 export const ARCHETYPES = {
-  tourist:    { label: 'Park Tourist',      tint: 0xe8b48c, patienceMul: 1.0, tipMul: 1.0,
+  tourist:    { label: 'Park Tourist',      tint: 0x3f7fa8, patienceMul: 1.0, tipMul: 1.0,
                 savvy: 0.35, films: 0.10, partySize: [2, 3], gentOnHappy: 1,
                 pool: ['beer', 'burger', 'coffee'] },
   influencer: { label: 'Influencer',        tint: 0xf0e442, patienceMul: 0.75, tipMul: 1.6,
                 savvy: 0.55, films: 0.85, partySize: [1, 2], gentOnHappy: 2,
                 pool: ['rangeoat', 'burger', 'retake'] },
-  techcouple: { label: 'Tech Couple',       tint: 0x7aa2b8, patienceMul: 0.9, tipMul: 1.4,
+  techcouple: { label: 'Tech Couple',       tint: 0xb8b0c8, patienceMul: 0.9, tipMul: 1.4,
                 savvy: 0.75, films: 0.25, partySize: [2, 2], gentOnHappy: 2,
                 pool: ['rangeoat', 'fancywater', 'coffee'] },
-  oldlocal:   { label: 'Old Local',         tint: 0x6d8177, patienceMul: 1.6, tipMul: 0.6,
+  oldlocal:   { label: 'Old Local',         tint: 0x7a4a2e, patienceMul: 1.6, tipMul: 0.6,
                 savvy: 0.9,  films: 0.0,  partySize: [1, 2], gentOnHappy: 0, local: true,
                 pool: ['beer', 'burger', 'mystool'] },
   bachelor:   { label: 'Bachelor Party',    tint: 0xcc79a7, patienceMul: 0.8, tipMul: 1.2,
                 savvy: 0.3,  films: 0.4,  partySize: [3, 4], gentOnHappy: 1, rowdy: true,
                 pool: ['beer', 'beer', 'dare'] },
-  inspector:  { label: 'Quiet Stranger',    tint: 0xb8b8c8, patienceMul: 1.4, tipMul: 0.0,
+  inspector:  { label: 'Quiet Stranger',    tint: 0x4a4f5c, patienceMul: 1.4, tipMul: 0.0,
                 savvy: 1.0,  films: 0.0,  partySize: [1, 1], gentOnHappy: 0, inspector: true,
                 pool: ['coffee'] },
 };

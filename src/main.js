@@ -440,6 +440,8 @@ function frame(t) {
   if (view) {
     const p = myPlayer();
     view.chargePreview = (chargeT0 != null && p) ? { player: p, power: chargePower() } : null;
+    // the world wears the verb: same read the HUD chip uses, drawn ON the thing
+    view.focusHint = (p && !game.over) ? game.contextHint(p) : null;
     view.lookYaw = look.yaw;
     view.lookPitch = look.pitch;
     view.sync(game, dt, mp ? mp.myPid : 0);
