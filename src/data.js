@@ -285,7 +285,12 @@ export const TUNING = {
   substituteCaughtHosp: -8, substituteCaughtHeat: 4,
   ejectTouristLoyalty: 5, ejectTouristHosp: -4, ejectLocalLoyalty: -9,
   tipHappy: 0.22, tipOk: 0.12,
-  registerGoal: 18000, resolveGoalRatio: 0.6,
+  // Measured over 20 seeds with the hesitating temp bot as a human proxy: cash
+  // lands p10 $293 / p50 $358 / p90 $430, resolve p10 58%%. At the old $180 goal
+  // a single idle bot cleared the night 20/20 — the register was not a bar, it
+  // was a formality. $280 makes a bad night lose and a good crew (who use the
+  // tray, which the bot never does) clear it comfortably.
+  registerGoal: 28000, resolveGoalRatio: 0.6,
 };
 
 // ── Narrator/flavor (view-only) ────────────────────────────────────────────

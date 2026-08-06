@@ -236,6 +236,15 @@ export class Hud {
       if (this.telegraphT <= 0) { $('telegraph').style.display = 'none'; }
     }
 
+    // ── "what do I do RIGHT NOW" ──────────────────────────────────────────
+    // Bible §34 information hierarchy, in order: bodily danger, then shared
+    // blockers that stop service, then the order that is about to die. The old
+    // HUD made you infer all of this from a scrolling toast column.
+    const obj = this.nextJob(game, player);
+    const oe = $('objective');
+    oe.innerHTML = obj.text;
+    oe.className = obj.hot ? 'hot' : '';
+
     // ── readable panic ────────────────────────────────────────────────────
     // One honest number from live sim state, not a mood light. It is what the
     // room would feel like: people shouting at you, something on fire, a pig.
@@ -255,13 +264,77 @@ export class Hud {
     $('vignette').style.opacity = (this.danger * 0.62).toFixed(3);
   }
 
+  /** The one thing most worth doing, read straight off sim state. Never invents
+   *  a task — if the room is genuinely calm it says so, which is information. */
+  nextJob(game, me) {
+    const down = game.players.find((q) => q !== me && q.stun > 1.0);
+    if (down) { return { text: '🤝 <b>' + down.e.label.split(' ')[0] + ' is on the floor</b> — go pick them up', hot: true }; }
+    if (game.fryer.smoking) { return { text: '🔥 <b>The fryer is smoking</b> — kill the circuit before it clears a table', hot: true }; }
+    if (!game.shotgun.stowed) { return { text: '⚠️ <b>The Regulator is out.</b> Put it back under the bar', hot: true }; }
+    if (game.tapsKeg <= 0) {
+      const holding = me.carry && me.carry.kind === 'keg';
+      return { text: holding ? '🛢️ <b>Get that keg to the taps</b>' : '🛢️ <b>Taps are dry</b> — a keg is out in the lot', hot: true };
+    }
+    const loose = game.pigs.filter((q) => q.loose && !q.carriedBy).length;
+    if (loose) {
+      return { text: '🐷 <b>' + loose + ' pig' + (loose > 1 ? 's are' : ' is') + ' indoors.</b> '
+        + (loose > 1 ? 'Grab them' : 'Grab it') + ', or lure with feed', hot: true };
+    }
+    const angry = game.parties.find((q) => q.state === 'complaining');
+    if (angry) { return { text: '😤 <b>Table ' + angry.tableId + ' has had enough</b> — grovel and take the order, or throw them out', hot: true }; }
+    const dying = game.orders.filter((o) => o.state === 'open').sort((a, b) => a.tLeft - b.tLeft)[0];
+    if (dying && dying.tLeft / dying.total < 0.35) {
+      const req = REQUESTS[dying.reqKey];
+      return { text: '⏳ <b>Table ' + dying.tableId + '</b> is nearly out of patience — ' + req.label, hot: true };
+    }
+    if (game.busClock != null) { return { text: '🚌 <b>The bus leaves in ' + Math.max(0, game.busClock | 0) + 's.</b> Serve who you can', hot: true }; }
+    const pay = game.parties.find((q) => q.state === 'waitpay');
+    if (pay) { return { text: '💵 <b>Table ' + pay.tableId + ' wants to settle up</b>', hot: false }; }
+    const wait = game.parties.find((q) => q.state === 'deciding' && q.decideT <= 0);
+    if (wait) { return { text: '🗒️ <b>Table ' + wait.tableId + ' is ready to order</b>', hot: false }; }
+    if (dying) {
+      const req = REQUESTS[dying.reqKey];
+      return { text: '🍺 <b>Table ' + dying.tableId + '</b> wants ' + req.label, hot: false };
+    }
+    if (game.dishFault) { return { text: '💦 <b>The dishwasher is leaking.</b> Fix it before the floor does the rest', hot: false }; }
+    if (game.spills.length) { return { text: '🧹 <b>' + game.spills.length + ' mess' + (game.spills.length > 1 ? 'es' : '') + ' on the floor.</b> Grab the mop when you get a second', hot: false }; }
+    if (game.phaseId() === 'prep') { return { text: '🔎 <b>Prep.</b> Something is already broken — walk the room and find it', hot: false }; }
+    return { text: '🌲 Quiet, for now. Stock up while it lasts', hot: false };
+  }
+
+  /** The line the group repeats to each other afterwards (bible §41 story
+   *  yield). Ranked by how much it would come up in the car on the way home. */
+  headline(result) {
+    const s = result.stats;
+    const j = result.journal;
+    const had = (cause) => j.some((x) => x.cause === cause);
+    if (j.some((x) => x.cause === 'evt.gun.fired')) {
+      return 'You fired a shotgun in a restaurant. Somebody filmed it.';
+    }
+    if (had('evt.pig.ate.evidence')) { return 'The pigs ate the evidence. Nobody is going to ask.'; }
+    if (had('evt.pig.tossed')) { return 'At some point tonight, a pig was thrown.'; }
+    const trays = j.filter((x) => x.cause === 'evt.tray.dumped').length;
+    if (trays >= 2) { return trays + ' full trays hit the floor. Three at a time, they said.'; }
+    if (had('evt.crewshove')) { return 'Most of the damage tonight was done by the staff, to the staff.'; }
+    if (had('evt.sub.caught')) { return 'They could tell it was not range oat.'; }
+    if (s.filmed >= 3) { return s.filmed + ' things went on the internet tonight.'; }
+    if (s.walkouts >= 12) { return s.walkouts + ' parties gave up and left. The door never stopped.'; }
+    if (result.ratio >= 0.85) { return 'Almost everybody who sat down got fed. That is rare.'; }
+    return 'A Friday in Copperhead. The lights are still on, mostly.';
+  }
+
   aftermath(result, game) {
     $('hud').style.display = 'none';
     $('after').style.display = 'flex';
     $('stamp').textContent = result.win ? AFTERMATH_STAMPS.win : AFTERMATH_STAMPS.loss;
-    $('stampline').textContent = result.win
+    const short = result.cash < TUNING.registerGoal;
+    $('stampline').innerHTML = (result.win
       ? 'Register made. Most of them left fed. The bar sees another Friday.'
-      : 'Short of the register goal — but the story was worth something.';
+      : short
+        ? 'Short of the register by $' + ((TUNING.registerGoal - result.cash) / 100).toFixed(0)
+          + '. So close it hurts.'
+        : 'The money was there — too many of them left without eating.')
+      + '<br><span style="color:var(--cream);opacity:.85">“' + this.headline(result) + '”</span>';
     $('n-cash').textContent = '$' + (result.cash / 100).toFixed(0);
     $('n-res').textContent = Math.round(result.ratio * 100) + '%';
     $('n-walk').textContent = result.stats.walkouts;

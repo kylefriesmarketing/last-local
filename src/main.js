@@ -187,6 +187,7 @@ function beginGame(cfg, myPid, isMp) {
   if (view.fpMode && !('ontouchstart' in window)) { $('locktip').style.display = 'block'; }
   window.__llGame = game;
   window.__llView = view;
+  window.__llHud = hud;   // the pane suspends rAF, so QA needs to drive hud.sync itself
   runLoops();
 }
 
