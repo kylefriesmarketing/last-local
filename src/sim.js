@@ -108,18 +108,24 @@ export class Game {
   ev(kind, data) { this.view.push(Object.assign({ kind, t: this.time }, data)); }
 
   // ── input & commands (lockstep boundary: only these mutate from outside) ─
-  setInput(pid, mx, mz, sprint) {
+  setInput(pid, mx, mz, sprint, fx, fz) {
     const p = this.players[pid];
     if (!p) { return; }
     p.mx = mx; p.mz = mz; p.sprint = !!sprint;
-    const m = Math.hypot(mx, mz);
-    if (m > 0.01) { p.fx = mx / m; p.fz = mz / m; }
+    if (fx != null && fz != null && Math.hypot(fx, fz) > 0.01) {
+      // first-person: facing follows the LOOK, not the feet
+      const fm = Math.hypot(fx, fz);
+      p.fx = fx / fm; p.fz = fz / fm;
+    } else {
+      const m = Math.hypot(mx, mz);
+      if (m > 0.01) { p.fx = mx / m; p.fz = mz / m; }
+    }
   }
 
   execCommand(pid, cmd) {
     const p = this.players[pid];
     if (!p || this.over) { return; }
-    if (cmd.c === 'in') { this.setInput(pid, cmd.mx || 0, cmd.mz || 0, cmd.sp); return; }
+    if (cmd.c === 'in') { this.setInput(pid, cmd.mx || 0, cmd.mz || 0, cmd.sp, cmd.fx, cmd.fz); return; }
     if (p.stun > 0) { return; }
     if (cmd.c === 'act') { this.doContext(p); }
     else if (cmd.c === 'drop') { this.dropCarry(p, true); }

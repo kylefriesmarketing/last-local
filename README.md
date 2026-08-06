@@ -32,9 +32,14 @@ Useful URLs: `?seed=47` (fixed night) · `?autostart=1` (skip menu) ·
 `?auto=1` (autopilot demo) · `?host=1` (auto-host; `&autostart2=1` starts on
 first join) · `?join=CODE` (auto-join).
 
-**Controls:** WASD move · **E** context verb (the one readable action) ·
-**Space (hold)** charge a throw — release to send it · Shift hustle ·
-**Q** ability · G drop · **F** fire the Regulator · M mute.
+**FIRST PERSON** (the friendslop camera): click to lock the mouse and look
+around; a reticle marks your aim. **WASD** strafe/walk relative to where
+you look · **E** context verb · **Space (hold)** charge a throw — release
+to send it wherever you're facing · Shift hustle · **Q** ability · G drop ·
+**F** fire the Regulator · M mute. Getting knocked down drops your eyes to
+the floorboards. `?cam=iso` brings back the overhead diorama (QA/spectate).
+**🎙️ Proximity voice in co-op**: hit the mic button — friends sound louder
+up close, quieter across the room, panned to where they actually stand.
 **Phones work**: virtual stick + DO/THROW/Q/DROP buttons appear on touch
 devices (full-tilt stick = hustle). Solo players can **hire a temp** — a
 deterministic bot teammate (menu checkbox or `?bot=1`) who takes orders,

@@ -42,6 +42,12 @@ export class View {
     this.glyphCache = new Map();
     this.chargePreview = null;
     this.arcLine = null;
+    this.fpMode = true;
+    this.lookYaw = 0;
+    this.lookPitch = 0;
+    this.camera.rotation.order = 'YXZ';
+    this.viewModel = null;
+    this.vmKind = undefined;
     this.resize();
     addEventListener('resize', () => this.resize());
   }
@@ -136,8 +142,10 @@ export class View {
         const wl = new THREE.Mesh(wallGeo, wallMat);
         wl.position.set(x + 0.5, 1.2, z + 0.5);
         wl.castShadow = true; wl.receiveShadow = true;
-        // front-facing walls (below the room) stay LOW so the camera sees in
-        if (z >= 14) { wl.scale.y = 0.35; wl.position.y = 0.42; }
+        // iso QA camera peeks over lowered south walls; first person gets real
+        // ones, tall enough to meet the ceiling with no sky slit
+        if (!this.fpMode && z >= 14) { wl.scale.y = 0.35; wl.position.y = 0.42; }
+        else if (this.fpMode) { wl.scale.y = 1.22; wl.position.y = 1.46; }
         S.add(wl);
       }
     }
@@ -249,6 +257,33 @@ export class View {
     signGlow.position.set(15, 2.6, 1.6);
     this.scene.add(signGlow);
 
+    // first person gets a roof over the room (pen + lot stay under the sky)
+    if (this.fpMode) {
+      const ceilTex = canvasTex((g, w, h) => {
+        g.fillStyle = '#3a2a1c'; g.fillRect(0, 0, w, h);
+        for (let i = 0; i < 8; i++) {
+          g.fillStyle = i % 2 ? '#33241a' : '#40301f';
+          g.fillRect(0, i * (h / 8), w, (h / 8) - 1);
+        }
+      });
+      const ceil = new THREE.Mesh(new THREE.PlaneGeometry(19, 14),
+        new THREE.MeshStandardMaterial({ map: ceilTex, roughness: 0.95, side: THREE.DoubleSide }));
+      ceil.rotation.x = Math.PI / 2;
+      ceil.position.set(15.5, 2.75, 8);
+      S.add(ceil);
+      // hanging bulbs where the warm lights live
+      for (const [bx, bz] of [[11, 9.5], [15, 4.5], [9, 4.5], [20, 6.5], [20, 2.5], [11.5, 12.5]]) {
+        const cord = new THREE.Mesh(new THREE.CylinderGeometry(0.015, 0.015, 0.55, 4),
+          new THREE.MeshBasicMaterial({ color: 0x111 }));
+        cord.position.set(bx, 2.45, bz);
+        S.add(cord);
+        const bulb = new THREE.Mesh(new THREE.SphereGeometry(0.09, 8, 8),
+          new THREE.MeshBasicMaterial({ color: 0xffd9a0 }));
+        bulb.position.set(bx, 2.15, bz);
+        S.add(bulb);
+      }
+      this.buildViewModel();
+    }
     // moonlit backdrop: distant ridge silhouette behind the lot
     const ridge = new THREE.Mesh(new THREE.PlaneGeometry(70, 12),
       new THREE.MeshBasicMaterial({ color: 0x0d1b22 }));
@@ -341,6 +376,48 @@ export class View {
     }
     g.userData.body = body;
     return g;
+  }
+
+  buildViewModel() {
+    this.scene.add(this.camera); // camera joins the scene so children render
+    const vm = new THREE.Group();
+    vm.position.set(0.34, -0.42, -0.72);
+    const handMat = new THREE.MeshStandardMaterial({ color: 0xf0c8a0, roughness: 0.8 });
+    const hand = new THREE.Mesh(new THREE.CapsuleGeometry
+      ? new THREE.CapsuleGeometry(0.055, 0.16, 3, 8)
+      : new THREE.SphereGeometry(0.07, 8, 8), handMat);
+    hand.rotation.x = -0.9;
+    vm.add(hand);
+    const hand2 = hand.clone();
+    hand2.position.set(-0.62, -0.03, 0.05);
+    vm.add(hand2);
+    this.camera.add(vm);
+    this.viewModel = vm;
+    this.vmHolder = new THREE.Group();
+    this.vmHolder.position.set(0, 0.1, -0.08);
+    vm.add(this.vmHolder);
+  }
+
+  syncViewModel(kind) {
+    if (this.vmKind === kind || !this.viewModel) { return; }
+    this.vmKind = kind;
+    while (this.vmHolder.children.length) { this.vmHolder.remove(this.vmHolder.children[0]); }
+    if (!kind) { return; }
+    const m = this.makeItem(kind === 'mopheld' ? 'garnish' : kind);
+    if (kind === 'mopheld') {
+      m.geometry = new THREE.CylinderGeometry(0.03, 0.03, 1.2, 6);
+      m.material.color.set(0x8a7a5a);
+      m.rotation.z = 0.5;
+      m.position.set(-0.1, 0.25, 0);
+    } else if (kind === 'shotgun') {
+      m.scale.setScalar(1.4);
+      m.position.set(-0.28, 0.02, -0.15);
+      m.rotation.y = -1.35;
+    } else if (kind === 'keg') {
+      m.geometry = new THREE.CylinderGeometry(0.22, 0.22, 0.34, 12);
+      m.position.set(-0.3, 0.05, -0.05);
+    }
+    this.vmHolder.add(m);
   }
 
   makePig() {
@@ -575,14 +652,36 @@ export class View {
     const nf = Math.min(1, game.time / SHIFT.duration);
     this.moon.intensity = 0.35 - nf * 0.15;
     this.sign.material.opacity = 0.85 + Math.sin(t * 1.7) * 0.12; // neon breathing
-    // camera: diorama frame with a gentle lean toward the focused player
+    // camera
     const p0 = game.players[focusPid] || game.players[0];
-    const lean = 0.16;
-    this.camera.position.set(
-      this.camBase.x + (p0.x - W / 2) * lean,
-      this.camBase.y,
-      this.camBase.z + (p0.z - H / 2) * lean * 0.6);
-    this.camera.lookAt(this.camLook.x + (p0.x - W / 2) * lean * 0.5, 0, this.camLook.z);
+    if (this.fpMode) {
+      // first person: you ARE the bartender
+      const local = this.playerMeshes[p0.pid];
+      if (local) { local.visible = false; }
+      const moving = Math.hypot(p0.mx, p0.mz) > 0.05;
+      const bob = moving && p0.stun <= 0 ? Math.sin(t * (p0.sprint ? 13 : 9.5)) * 0.038 : 0;
+      let eyeY = 1.52 + bob;
+      let roll = 0;
+      if (p0.stun > 1.0) { eyeY = 0.45; roll = 0.55; } // knocked flat, seeing stars
+      else if (p0.stun > 0) { roll = Math.sin(t * 22) * 0.05; }
+      this.camera.position.set(p0.x, eyeY, p0.z);
+      this.camera.rotation.set(this.lookPitch, -this.lookYaw, roll);
+      this.camera.fov = 74;
+      this.camera.updateProjectionMatrix();
+      this.syncViewModel(p0.carry ? p0.carry.kind : null);
+      if (this.viewModel) {
+        this.viewModel.position.x = 0.34 + (moving ? Math.sin(t * 4.7) * 0.014 : 0);
+        this.viewModel.position.y = -0.42 + (moving ? Math.abs(Math.sin(t * 9.4)) * 0.02 : 0);
+      }
+    } else {
+      // iso diorama (QA captures): gentle lean toward the focused player
+      const lean = 0.16;
+      this.camera.position.set(
+        this.camBase.x + (p0.x - W / 2) * lean,
+        this.camBase.y,
+        this.camBase.z + (p0.z - H / 2) * lean * 0.6);
+      this.camera.lookAt(this.camLook.x + (p0.x - W / 2) * lean * 0.5, 0, this.camLook.z);
+    }
     // screen flash decay
     if (this.flashT > 0) {
       this.flashT -= dt * 2.2;

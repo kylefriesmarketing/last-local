@@ -90,7 +90,16 @@ export class PeerSession {
     const players = [{ employeeKey: this.emp }];
     for (const c of this.conns) { players.push({ employeeKey: c.emp }); }
     const cfg = { seed: seed >>> 0 || ((Math.random() * 99999) | 1), players };
-    for (const c of this.conns) { try { c.conn.send({ k: 'start', cfg, pid: c.pid }); } catch { /* gone */ } }
+    // voice roster: everyone learns everyone's peer id for the audio mesh
+    const vox = [{ pid: 0, peer: this.peer.id }];
+    for (const c of this.conns) { vox.push({ pid: c.pid, peer: c.conn.peer }); }
+    for (const c of this.conns) {
+      try {
+        c.conn.send({ k: 'voxpeers', list: vox });
+        c.conn.send({ k: 'start', cfg, pid: c.pid });
+      } catch { /* gone */ }
+    }
+    this.onEvent && this.onEvent('voxpeers', vox);
     this.onEvent && this.onEvent('start', { cfg, pid: 0 });
     return cfg;
   }
@@ -112,6 +121,7 @@ export class PeerSession {
           if (d.k === 'seat') { clearTimeout(timeout); this.myPid = d.pid; onEvent('seated', { pid: d.pid }); resolve({ pid: d.pid }); return; }
           if (d.k === 'full') { clearTimeout(timeout); reject(new Error('Room is full or already started.')); return; }
           if (d.k === 'start') { this.started = true; this.myPid = d.pid; onEvent('start', { cfg: d.cfg, pid: d.pid }); return; }
+          if (d.k === 'voxpeers') { onEvent('voxpeers', d.list); return; }
           if (this.onNetMessage) { this.onNetMessage(d); }
         });
         conn.on('close', () => { onEvent('hostlost', {}); });

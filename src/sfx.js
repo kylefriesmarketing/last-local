@@ -79,6 +79,7 @@ export function cue(kind) {
     case 'fryersmoke': noise(0.6, 0.12, 500); break;
     case 'song': { const notes = [392, 494, 587, 494, 392, 330, 392]; notes.forEach((n, i) => tone(n, 0.22, 'triangle', 0.09, i * 0.19)); break; }
     case 'gameover': { [523, 494, 392, 330].forEach((n, i) => tone(n, 0.4, 'sine', 0.1, i * 0.3)); break; }
+    case 'step': noise(0.05, 0.05, 320); break;
     case 'throw': noise(0.14, 0.12, 2600); break;
     case 'catch': tone(880, 0.06, 'square', 0.07); tone(1320, 0.08, 'square', 0.06, 0.05); break;
     case 'bonk': tone(150, 0.16, 'square', 0.14, 0, 85); noise(0.07, 0.16, 700); break;

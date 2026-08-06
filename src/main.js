@@ -8,6 +8,7 @@ import { Lockstep } from './net.js';
 import { PeerSession } from './net-peer.js';
 import { View } from './render.js';
 import { Hud } from './ui.js';
+import { VoiceMesh } from './voice.js';
 import * as sfx from './sfx.js';
 
 const $ = (id) => document.getElementById(id);
@@ -57,6 +58,8 @@ function lobbyLine(html, showStart) {
 // ── co-op lobby ────────────────────────────────────────────────────────────
 let session = null;
 let joinedCount = 0;
+let voice = null;
+let voxRoster = null;
 
 async function hostCoop() {
   if (session || game) { return; }
@@ -109,6 +112,9 @@ function onLobbyEvent(kind, data) {
       mp.lockstep.markLeft(data.pid);
       hud && hud.toast('👋 P' + (data.pid + 1) + ' dropped — their toy goes quiet.', 'warn');
     }
+  } else if (kind === 'voxpeers') {
+    voxRoster = data;
+    if (voice) { voice.setRoster(data); }
   } else if (kind === 'hostlost') {
     if (hud) { hud.toast('☎️ Lost the host. Last call, everybody.', 'warn'); }
     if (game && !game.over) { game.endShift(); } // the night ends with a real story card
@@ -149,14 +155,36 @@ function beginGame(cfg, myPid, isMp) {
     };
     mp = { session, lockstep, myPid };
     window.__llMp = () => ({ tick: lockstep.tick, pid: myPid, players: cfg.players.length, fps: [...fpLog.entries()].slice(-3) });
+    // proximity voice: opt-in mic, spatialized from the actual room
+    voice = new VoiceMesh(session.peer, myPid);
+    if (voxRoster) { voice.setRoster(voxRoster); }
+    const mic = $('mic-btn');
+    mic.style.display = 'block';
+    mic.onclick = async () => {
+      if (voice.enabled) {
+        voice.disable();
+        mic.textContent = '🎙️ voice off';
+        return;
+      }
+      try {
+        await voice.enable();
+        mic.textContent = '🎙️ voice ON';
+        hud && hud.toast('🎙️ Proximity voice on — they hear you when they’re close.', 'good');
+      } catch (e) {
+        mic.textContent = '🎙️ no mic';
+        hud && hud.toast('🎙️ Mic unavailable: ' + (e && e.name ? e.name : e), 'warn');
+      }
+    };
   }
   view = new View($('c'));
+  view.fpMode = params.get('cam') !== 'iso'; // iso kept for QA captures
   view.build(game);
   hud = new Hud();
   hud.show();
   $('menu').style.display = 'none';
   hud.toast('🌲 Copperhead, Montana. Friday. Seed ' + cfg.seed + (isMp ? ' — party of ' + cfg.players.length : '') + '.');
   hud.toast('🔎 Prep: something is already broken. Find it.');
+  if (view.fpMode && !('ontouchstart' in window)) { $('locktip').style.display = 'block'; }
   window.__llGame = game;
   window.__llView = view;
   runLoops();
@@ -193,8 +221,48 @@ function queueCmd(cmd) {
 }
 
 const held = new Set();
-let lastIn = { mx: 0, mz: 0, sp: false };
+let lastIn = { mx: 0, mz: 0, sp: false, fx: 0, fz: -1 };
 let chargeT0 = null; // Space held: throw charge start (local wall time)
+
+// ── first-person look (view-local; only quantized facing crosses the wire) ─
+export const look = { yaw: 0, pitch: 6 };
+const canvasEl = document.getElementById('c');
+
+canvasEl.addEventListener('click', () => {
+  if (game && !game.over && !document.pointerLockElement) {
+    canvasEl.requestPointerLock();
+  }
+});
+addEventListener('mousemove', (e) => {
+  if (document.pointerLockElement !== canvasEl) { return; }
+  look.yaw += e.movementX * 0.0026;
+  look.pitch = Math.max(-1.15, Math.min(1.3, look.pitch - (e.movementY * 0.0026)));
+});
+document.addEventListener('pointerlockchange', () => {
+  const tip = document.getElementById('locktip');
+  if (tip) { tip.style.display = (game && !game.over && document.pointerLockElement !== canvasEl) ? 'block' : 'none'; }
+});
+
+function lookForward() {
+  return { fx: Math.sin(look.yaw), fz: -Math.cos(look.yaw) };
+}
+
+// touch look: drag the right side of the screen (left side is the stick's)
+let lookPtr = null;
+let lookLX = 0;
+let lookLY = 0;
+canvasEl.addEventListener('pointerdown', (e) => {
+  if (e.pointerType !== 'touch' || e.clientX < innerWidth * 0.42) { return; }
+  lookPtr = e.pointerId; lookLX = e.clientX; lookLY = e.clientY;
+});
+addEventListener('pointermove', (e) => {
+  if (e.pointerId !== lookPtr) { return; }
+  look.yaw += (e.clientX - lookLX) * 0.0062;
+  look.pitch = Math.max(-1.15, Math.min(1.3, look.pitch - ((e.clientY - lookLY) * 0.0062)));
+  lookLX = e.clientX; lookLY = e.clientY;
+});
+addEventListener('pointerup', (e) => { if (e.pointerId === lookPtr) { lookPtr = null; } });
+addEventListener('pointercancel', (e) => { if (e.pointerId === lookPtr) { lookPtr = null; } });
 
 function myPlayer() { return game && game.players[mp ? mp.myPid : 0]; }
 
@@ -237,18 +305,26 @@ addEventListener('blur', () => { held.clear(); chargeT0 = null; });
 const touchVec = { mx: 0, mz: 0 };
 
 function pumpInput() {
-  // keys + virtual stick share one channel; quantized so lockstep traffic
-  // doesn't spam a command per micro-wiggle
-  let mx = (held.has('d') || held.has('arrowright') ? 1 : 0) - (held.has('a') || held.has('arrowleft') ? 1 : 0);
-  let mz = (held.has('s') || held.has('arrowdown') ? 1 : 0) - (held.has('w') || held.has('arrowup') ? 1 : 0);
-  mx = Math.max(-1, Math.min(1, mx + touchVec.mx));
-  mz = Math.max(-1, Math.min(1, mz + touchVec.mz));
-  mx = Math.round(mx * 8) / 8;
-  mz = Math.round(mz * 8) / 8;
+  // first person: WASD/stick are strafe+forward in LOOK space, rotated into
+  // world space client-side; facing is the look direction. Everything is
+  // quantized so lockstep traffic doesn't spam a command per micro-wiggle.
+  const strafe = ((held.has('d') || held.has('arrowright') ? 1 : 0) - (held.has('a') || held.has('arrowleft') ? 1 : 0)) + touchVec.mx;
+  const forward = ((held.has('w') || held.has('arrowup') ? 1 : 0) - (held.has('s') || held.has('arrowdown') ? 1 : 0)) - touchVec.mz;
+  const f = lookForward();
+  const rx = -f.fz; // right vector = forward rotated 90° clockwise
+  const rz = f.fx;
+  let mx = (f.fx * forward) + (rx * strafe);
+  let mz = (f.fz * forward) + (rz * strafe);
+  const m = Math.hypot(mx, mz);
+  if (m > 1) { mx /= m; mz /= m; }
+  mx = Math.round(mx * 16) / 16;
+  mz = Math.round(mz * 16) / 16;
   const sp = held.has('shift') || Math.hypot(touchVec.mx, touchVec.mz) > 0.96;
-  if (mx !== lastIn.mx || mz !== lastIn.mz || sp !== lastIn.sp) {
-    lastIn = { mx, mz, sp };
-    queueCmd({ c: 'in', mx, mz, sp });
+  const fx = Math.round(f.fx * 16) / 16;
+  const fz = Math.round(f.fz * 16) / 16;
+  if (mx !== lastIn.mx || mz !== lastIn.mz || sp !== lastIn.sp || fx !== lastIn.fx || fz !== lastIn.fz) {
+    lastIn = { mx, mz, sp, fx, fz };
+    queueCmd({ c: 'in', mx, mz, sp, fx, fz });
   }
 }
 
@@ -363,12 +439,25 @@ function frame(t) {
   if (view) {
     const p = myPlayer();
     view.chargePreview = (chargeT0 != null && p) ? { player: p, power: chargePower() } : null;
+    view.lookYaw = look.yaw;
+    view.lookPitch = look.pitch;
     view.sync(game, dt, mp ? mp.myPid : 0);
+    // footsteps: the body you inhabit makes noise
+    if (p && !game.over && Math.hypot(p.mx, p.mz) > 0.2 && p.stun <= 0 && !p.busy) {
+      stepT -= dt;
+      if (stepT <= 0) {
+        stepT = p.sprint ? 0.3 : 0.44;
+        sfx.cue('step');
+      }
+    }
   }
   if (hud && game && !game.over) {
     hud.sync(game, game.players[mp ? mp.myPid : 0], dt, chargePower(), stallSeconds);
   }
+  if (voice && game && mp) { voice.update(game, mp.myPid); }
 }
+
+let stepT = 0;
 
 function runLoops() {
   lastT = performance.now();
@@ -391,6 +480,7 @@ function runLoops() {
 // ── QA handles (the toybox tradition) ──────────────────────────────────────
 window.__llSoak = (opts) => soak(opts || {});
 window.__llPilot = autopilot;
+window.__llLook = look;
 window.__llStart = (emp, seed) => {
   if (game) { return 'already started — reload the page (no same-page restarts)'; }
   chosenEmp = emp || chosenEmp;
